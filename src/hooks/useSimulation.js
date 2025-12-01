@@ -88,6 +88,7 @@ export const useSimulation = (demoMode = true) => {
 
             let segmentIndex = 0;
 
+
             const animateSegment = () => {
                 if (segmentIndex >= segmentPoints.length) {
                     currentPathIndex++;
@@ -95,8 +96,26 @@ export const useSimulation = (demoMode = true) => {
                     return;
                 }
 
+                // Get current officer position from state
+                let currentLat, currentLng;
+                setOfficers(prev => {
+                    const currentOfficer = prev.find(o => o.id === officerId);
+                    currentLat = currentOfficer.lat;
+                    currentLng = currentOfficer.lng;
+                    return prev;
+                });
+
                 const targetPoint = segmentPoints[segmentIndex];
-                const steps = 120;
+
+                // Calculate actual distance in km
+                const distKm = Math.sqrt(
+                    Math.pow((targetPoint.lat - currentLat) * 111, 2) +
+                    Math.pow((targetPoint.lng - currentLng) * 111, 2)
+                );
+
+                // Speed: 20 km/h = 0.00556 km/s
+                const durationSeconds = Math.max(0.5, distKm / 0.00556); // Minimum 0.5 seconds
+                const steps = Math.floor(durationSeconds * 60); // 60 fps
                 let step = 0;
 
                 const interval = setInterval(() => {
