@@ -248,6 +248,9 @@ const CRIME_TYPES = {
 // --- LOGIC HELPERS ---
 
 const calculateFitScore = (officer, incident) => {
+    if (!officer.lat || !officer.lng || !incident.lat || !incident.lng) {
+        return { score: 0, breakdown: { proximity: 0, skill: 0, fatigue: 0 }, distance: Infinity };
+    }
     const dist = calculateDistance(officer.lat, officer.lng, incident.lat, incident.lng);
 
     // STRICT REQUIREMENT: Proximity ONLY for initial dispatch.
@@ -368,6 +371,13 @@ export default function App() {
             // 1. Calculate Path on Road Network
             const startNode = getNearestNode(officer.lat, officer.lng);
             const endNode = getNearestNode(incident.lat, incident.lng);
+
+            if (!startNode || !endNode) {
+                console.error("Could not find nearest nodes for dispatch", officer, incident);
+                setDispatching(false);
+                return;
+            }
+
             const pathIds = findPath(startNode.id, endNode.id);
 
             // Store route for visualization
