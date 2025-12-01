@@ -40,10 +40,11 @@ export const usePathfinding = () => {
         });
 
         gScore[startNodeId] = 0;
-        fScore[startNodeId] = calculateDistance(
+        const straightLineDist = calculateDistance(
             ROAD_NODES[startNodeId].lat, ROAD_NODES[startNodeId].lng,
             ROAD_NODES[endNodeId].lat, ROAD_NODES[endNodeId].lng
         );
+        fScore[startNodeId] = straightLineDist;
 
         while (openSet.length > 0) {
             let current = openSet.reduce((lowest, node) => {
@@ -56,6 +57,21 @@ export const usePathfinding = () => {
                     current = cameFrom[current];
                     path.unshift(current);
                 }
+
+                // Check if path is inefficient (more than 1.5x straight line distance)
+                let pathDist = 0;
+                for (let i = 0; i < path.length - 1; i++) {
+                    pathDist += calculateDistance(
+                        ROAD_NODES[path[i]].lat, ROAD_NODES[path[i]].lng,
+                        ROAD_NODES[path[i + 1]].lat, ROAD_NODES[path[i + 1]].lng
+                    );
+                }
+
+                // If path is too long, just use direct route
+                if (pathDist > straightLineDist * 1.5) {
+                    return [startNodeId, endNodeId];
+                }
+
                 return path;
             }
 
@@ -74,7 +90,7 @@ export const usePathfinding = () => {
                 }
             }
         }
-        return [startNodeId, endNodeId]; // Fallback
+        return [startNodeId, endNodeId]; // Fallback - direct route
     }, [calculateDistance]);
 
     return { calculateDistance, getNearestNode, findPath };
