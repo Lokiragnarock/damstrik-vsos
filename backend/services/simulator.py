@@ -44,56 +44,96 @@ class Simulator:
             event_id = f"EVT-{int(datetime.now().timestamp())}-{random.randint(100,999)}"
             evt_type = random.choice(list(EventType))
             
-            lat = random.uniform(LAT_MIN, LAT_MAX)
-            lng = random.uniform(LNG_MIN, LNG_MAX)
+            # Pick a random node from the road network for the event location
+            node_names = list(self.road_network.nodes.keys())
+            event_node = random.choice(node_names)
+            coords = self.road_network.nodes[event_node]
             
             self.events[event_id] = Event(
                 event_id=event_id,
                 type=evt_type,
                 severity=random.randint(1, 10),
-                location=Location(lat=lat, lng=lng),
+                location=Location(lat=coords[0], lng=coords[1]),
                 status=EventStatus.ACTIVE
             )
             
+            # Dispatch logic: Find nearest idle asset
+            nearest_asset = None
+            min_dist = float('inf')
+            
+            for asset in self.assets.values():
+                if asset.status == AssetStatus.IDLE:
+                    dist = haversine_distance((asset.location.lat, asset.location.lng), coords)
+                    if dist < min_dist:
+                        min_dist = dist
+                        nearest_asset = asset
+            
+            if nearest_asset:
+                nearest_asset.status = AssetStatus.BUSY
+                nearest_asset.target_node = event_node
+                # Calculate path immediately
+                nearest_asset.current_path = self.road_network.get_path(nearest_asset.current_node, event_node)
+                # Remove start node from path as we are already there (or close enough)
+                if nearest_asset.current_path and nearest_asset.current_path[0] == nearest_asset.current_node:
+                    nearest_asset.current_path.pop(0)
+                print(f"Dispatched {nearest_asset.asset_id} to {event_id} at {event_node}")
+
             self.ingestion_log.append({
                 "id": event_id,
                 "timestamp": datetime.now().isoformat(),
                 "source": "SAT-UPLINK",
-                "raw_data": f"Anomaly: {evt_type} detected at {lat:.4f}, {lng:.4f}"
+                "raw_data": f"Anomaly: {evt_type} detected at {event_node}"
             })
             if len(self.ingestion_log) > 50:
                 self.ingestion_log.pop(0)
 
-            print(f"Generated Event: {event_id} ({evt_type})")
+            print(f"Generated Event: {event_id} ({evt_type}) at {event_node}")
 
     def _move_assets(self):
         for asset_id, asset in self.assets.items():
+            # If idle and no target, wander randomly
             if asset.status == AssetStatus.IDLE:
-                if not getattr(asset, 'target_node', None) or asset.current_node == asset.target_node:
+                if not asset.target_node or asset.current_node == asset.target_node:
                     neighbors = self.road_network.adj_list.get(asset.current_node, [])
                     if neighbors:
                         asset.target_node = random.choice(neighbors)
-            
-            if asset.target_node and asset.current_node != asset.target_node:
-                target_coords = self.road_network.nodes[asset.target_node]
+                        asset.current_path = [asset.target_node] # Direct neighbor, path is just the node
+
+            # Move along path
+            if asset.current_path:
+                next_node = asset.current_path[0]
+                target_coords = self.road_network.nodes[next_node]
                 current_coords = (asset.location.lat, asset.location.lng)
                 
-                speed = 0.2 # Drones are faster
-                new_lat = current_coords[0] + (target_coords[0] - current_coords[0]) * speed
-                new_lng = current_coords[1] + (target_coords[1] - current_coords[1]) * speed
+                # Constant speed movement (degrees per step)
+                # Approx 0.0001 deg is ~11 meters. 
+                # Speed of 0.0002 per tick (1 sec) is ~22 m/s or ~80 km/h (fast police car)
+                speed = 0.0002 
                 
-                asset.location.lat = new_lat
-                asset.location.lng = new_lng
+                # Calculate direction vector
+                dx = target_coords[0] - current_coords[0]
+                dy = target_coords[1] - current_coords[1]
+                distance = math.sqrt(dx**2 + dy**2)
                 
-                dist = math.sqrt((new_lat - target_coords[0])**2 + (new_lng - target_coords[1])**2)
-                if dist < 0.0005:
-                    asset.current_node = asset.target_node
-                    asset.location.lat = target_coords[0]
-                    asset.location.lng = target_coords[1]
+                if distance > 0:
+                    # Normalize and scale by speed
+                    move_x = (dx / distance) * speed
+                    move_y = (dy / distance) * speed
+                    
+                    # Check if we overshoot
+                    if distance <= speed:
+                        # Reached the node
+                        asset.location.lat = target_coords[0]
+                        asset.location.lng = target_coords[1]
+                        asset.current_node = next_node
+                        asset.current_path.pop(0) # Remove reached node
+                    else:
+                        asset.location.lat += move_x
+                        asset.location.lng += move_y
             
             asset.time_worked_minutes += 1.0
             if asset.status != AssetStatus.OFF_DUTY:
-                asset.fatigue_level = max(0.0, asset.fatigue_level - 0.001) # Battery drain? logic reversed for fatigue
+                asset.fatigue_level = max(0.0, asset.fatigue_level - 0.001)
 
     async def run_loop(self, manager):
         print("Simulation Loop Started")
