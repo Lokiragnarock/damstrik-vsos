@@ -19,14 +19,14 @@ class Simulator:
         self.road_network = RoadNetwork()
         self.assets: Dict[str, Asset] = self._init_assets()
         self.events: Dict[str, Event] = {}
-        self.ingestion_log: List[Dict] = [] # [NEW] Log for "Truth Stream"
+        self.ingestion_log: List[Dict] = []
         self.running = True
 
     def _init_assets(self) -> Dict[str, Asset]:
         assets = {}
         node_names = list(self.road_network.nodes.keys())
-        for i in range(5):
-            # Spawn at random intersections
+        # Increased to 15 assets
+        for i in range(15):
             start_node = random.choice(node_names)
             coords = self.road_network.nodes[start_node]
             
@@ -36,98 +36,147 @@ class Simulator:
                 location=Location(lat=coords[0], lng=coords[1]),
                 status=AssetStatus.IDLE
             )
-            # Monkey-patching a "current_node" attribute for graph traversal
             assets[f"PCR-{i+1}"].current_node = start_node
             assets[f"PCR-{i+1}"].target_node = None
+            assets[f"PCR-{i+1}"].path = [] # List of nodes to follow
         return assets
 
     def _generate_event(self):
-        if random.random() < 0.1:
+        if random.random() < 0.05: # Slightly reduced frequency
             event_id = f"EVT-{int(datetime.now().timestamp())}-{random.randint(100,999)}"
             evt_type = random.choice(list(EventType))
             
-            # Events also snap to nearest node for now (or stay random, but let's snap for clean movement)
-            # Actually, let's keep events random, but assets move to nearest node of event
-            lat = random.uniform(LAT_MIN, LAT_MAX)
-            lng = random.uniform(LNG_MIN, LNG_MAX)
+            # Snap event to a random node for reachable dispatch
+            node_names = list(self.road_network.nodes.keys())
+            event_node = random.choice(node_names)
+            coords = self.road_network.nodes[event_node]
             
             self.events[event_id] = Event(
                 event_id=event_id,
                 type=evt_type,
                 severity=random.randint(1, 10),
-                location=Location(lat=lat, lng=lng),
+                location=Location(lat=coords[0], lng=coords[1]),
                 status=EventStatus.ACTIVE
             )
+            self.events[event_id].node_id = event_node # Store node ID for routing
             
-            # Log ingestion
             self.ingestion_log.append({
                 "id": event_id,
                 "timestamp": datetime.now().isoformat(),
                 "source": "100-DIAL",
-                "raw_data": f"Caller reported {evt_type} near {lat:.4f}, {lng:.4f}"
+                "raw_data": f"Caller reported {evt_type} at {event_node}"
             })
-            # Keep log size manageable
             if len(self.ingestion_log) > 50:
                 self.ingestion_log.pop(0)
 
-            print(f"Generated Event: {event_id} ({evt_type})")
+            print(f"Generated Event: {event_id} ({evt_type}) at {event_node}")
+
+    def _assign_tasks(self):
+        # Assign IDLE assets to ACTIVE unassigned events
+        active_events = [e for e in self.events.values() if e.status == EventStatus.ACTIVE]
+        idle_assets = [a for a in self.assets.values() if a.status == AssetStatus.IDLE]
+        
+        for event in active_events:
+            # Check if already assigned (simple check: is any asset targeting this event?)
+            is_assigned = any(a.target_event_id == event.event_id for a in self.assets.values() if hasattr(a, 'target_event_id'))
+            if is_assigned:
+                continue
+                
+            if not idle_assets:
+                break
+                
+            # Find nearest asset
+            best_asset = None
+            min_dist = float('inf')
+            
+            for asset in idle_assets:
+                dist = haversine_distance(asset.location, event.location)
+                if dist < min_dist:
+                    min_dist = dist
+                    best_asset = asset
+            
+            if best_asset:
+                best_asset.status = AssetStatus.DISPATCHED
+                best_asset.target_event_id = event.event_id
+                best_asset.target_node = event.node_id
+                # Calculate path
+                best_asset.path = self._calculate_path(best_asset.current_node, event.node_id)
+                idle_assets.remove(best_asset)
+                print(f"Dispatched {best_asset.asset_id} to {event.event_id}")
+
+    def _calculate_path(self, start_node, end_node):
+        # Simple BFS for pathfinding
+        queue = [(start_node, [start_node])]
+        visited = set()
+        while queue:
+            node, path = queue.pop(0)
+            if node == end_node:
+                return path[1:] # Return path excluding start
+            if node not in visited:
+                visited.add(node)
+                for neighbor in self.road_network.adj_list.get(node, []):
+                    queue.append((neighbor, path + [neighbor]))
+        return []
 
     def _move_assets(self):
-        for asset_id, asset in self.assets.items():
-            # 1. Determine Target
+        SPEED = 0.00015 # Approx speed in degrees per tick
+        
+        for asset in self.assets.values():
+            # Logic for IDLE patrolling
             if asset.status == AssetStatus.IDLE:
-                # Random patrol: Pick a random neighbor
-                if not getattr(asset, 'target_node', None) or asset.current_node == asset.target_node:
-                    neighbors = self.road_network.adj_list[asset.current_node]
-                    asset.target_node = random.choice(neighbors)
+                if not asset.path:
+                    # Pick random neighbor
+                    neighbors = self.road_network.adj_list.get(asset.current_node, [])
+                    if neighbors:
+                        next_node = random.choice(neighbors)
+                        asset.path = [next_node]
             
-            # 2. Move along graph
-            if asset.target_node and asset.current_node != asset.target_node:
-                # In a real physics engine, we'd interpolate. 
-                # Here, we just "jump" to the next node or interpolate slowly?
-                # Let's jump for now to prove graph logic, or interpolate 10%
-                
-                target_coords = self.road_network.nodes[asset.target_node]
+            # Logic for moving along path
+            if asset.path:
+                target_node = asset.path[0]
+                target_coords = self.road_network.nodes[target_node]
                 current_coords = (asset.location.lat, asset.location.lng)
                 
-                # Simple Linear Interpolation (Lerp)
-                speed = 0.1 # 10% per tick
-                new_lat = current_coords[0] + (target_coords[0] - current_coords[0]) * speed
-                new_lng = current_coords[1] + (target_coords[1] - current_coords[1]) * speed
+                # Calculate distance to next node
+                dist_to_node = math.sqrt((target_coords[0] - current_coords[0])**2 + (target_coords[1] - current_coords[1])**2)
                 
-                asset.location.lat = new_lat
-                asset.location.lng = new_lng
-                
-                # Check if arrived (close enough)
-                dist = math.sqrt((new_lat - target_coords[0])**2 + (new_lng - target_coords[1])**2)
-                if dist < 0.0005: # Approx 50m
-                    asset.current_node = asset.target_node
-                    # Snap exactly
+                if dist_to_node < SPEED:
+                    # Arrived at node
                     asset.location.lat = target_coords[0]
                     asset.location.lng = target_coords[1]
-            
-            # 3. Update Stats (1 tick = 1 minute sim time for demo speed)
+                    asset.current_node = target_node
+                    asset.path.pop(0)
+                    
+                    # If arrived at event
+                    if asset.status == AssetStatus.DISPATCHED and not asset.path:
+                        asset.status = AssetStatus.BUSY
+                        # Auto-resolve event after some time (simulated by just clearing status later)
+                        # For now, just stay busy
+                else:
+                    # Move towards node
+                    ratio = SPEED / dist_to_node
+                    new_lat = current_coords[0] + (target_coords[0] - current_coords[0]) * ratio
+                    new_lng = current_coords[1] + (target_coords[1] - current_coords[1]) * ratio
+                    asset.location.lat = new_lat
+                    asset.location.lng = new_lng
+
+            # Fatigue
             asset.time_worked_minutes += 1.0
             if asset.status != AssetStatus.OFF_DUTY:
-                asset.fatigue_level = min(1.0, asset.fatigue_level + 0.001)
+                asset.fatigue_level = min(1.0, asset.fatigue_level + 0.0005)
 
     async def run_loop(self, manager):
         print("Simulation Loop Started")
         while self.running:
             self._generate_event()
+            self._assign_tasks()
             self._move_assets()
             
-            # Prepare state update
-            from fastapi.encoders import jsonable_encoder
-            
-            # Heatmap Data: List of [lat, lng, intensity]
-            # For now, just use active events as high intensity points
+            # Heatmap Data
             heatmap_data = []
             for evt in self.events.values():
-                heatmap_data.append([evt.location.lat, evt.location.lng, evt.severity / 10.0]) # Normalize severity
+                heatmap_data.append([evt.location.lat, evt.location.lng, evt.severity / 10.0])
             
-            # Also add some static "historical" hotspots for demo effect
-            # e.g., Sony World Signal is always busy
             hotspot = self.road_network.nodes["SONY_WORLD"]
             heatmap_data.append([hotspot[0], hotspot[1], 0.5])
 
@@ -137,12 +186,12 @@ class Simulator:
                 "events": jsonable_encoder([e for e in self.events.values()]),
                 "logs": self.ingestion_log,
                 "heatmap": heatmap_data,
-                "road_network": { # Send graph once (or every time, it's small) for drawing
+                "road_network": {
                     "nodes": self.road_network.nodes,
-                    "edges": self.road_network.adj_list # Simplified adjacency
+                    "edges": self.road_network.adj_list
                 }
             }
             
             await manager.broadcast(json.dumps(state))
-            await asyncio.sleep(1) 
+            await asyncio.sleep(0.5) # Faster ticks for smoother movement 
 
