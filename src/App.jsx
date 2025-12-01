@@ -478,6 +478,10 @@ export default function App() {
 
             moveAlongPath();
 
+            // Close modal and stop loading state
+            setDispatching(false);
+            setShowDispatchModal(false);
+
         }, 2000);
     }, [addLog, officers, incidents, repositionOthers]);
 
