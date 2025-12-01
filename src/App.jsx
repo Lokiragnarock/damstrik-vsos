@@ -516,15 +516,15 @@ export default function App() {
                             addLog("INCOMING CALL: +91-98XXX-XXXX (Tower: SG Palya)", 'text-red-400');
                             addLog("Voice-to-Text Active... Transcribing...", 'text-red-300');
                             setTimeout(() => addLog("Keyword Detected: 'Snatch', 'Bike', 'Help'", 'text-red-400'), 1000);
-                            newIncident = { id: `inc-${Date.now()}`, type: 'theft', location: 'SG Palya Main Road', time: 'Just Now', status: 'pending', priority: 'high', x: 48, y: 62, desc: 'Two wheeler snatch & grab reported near Christ University Gate 1. Victim reporting via Dial 112.' };
+                            newIncident = { id: `inc-${Date.now()}`, type: 'theft', location: 'SG Palya Main Road', time: 'Just Now', status: 'pending', priority: 'high', lat: 12.9352, lng: 77.6093, desc: 'Two wheeler snatch & grab reported near Christ University Gate 1. Victim reporting via Dial 112.' };
                         } else if (currentScenario === 1) {
                             addLog("Predictive Model Alert: Crowd Density Critical > 85%", 'text-cyan-400');
                             addLog("Correlation: Weather (Rain) + Traffic (High) -> Risk of Public Disorder", 'text-cyan-300');
-                            newIncident = { id: `inc-${Date.now()}`, type: 'predictive', location: 'Sony Signal Junction', time: 'Forecast (+15m)', status: 'pending', priority: 'medium', x: 70, y: 20, desc: 'AI Forecast: High probability of traffic deadlock leading to public disorder. Pre-emptive patrol requested.' };
+                            newIncident = { id: `inc-${Date.now()}`, type: 'predictive', location: 'Sony Signal Junction', time: 'Forecast (+15m)', status: 'pending', priority: 'medium', lat: 12.9400, lng: 77.6240, desc: 'AI Forecast: High probability of traffic deadlock leading to public disorder. Pre-emptive patrol requested.' };
                         } else {
                             addLog("RADIO SIGNAL: Unit KA-05-334 Requesting Assist", 'text-purple-400');
                             addLog("Signal Triangulation: Madiwala Market", 'text-purple-300');
-                            newIncident = { id: `inc-${Date.now()}`, type: 'assault', location: 'Madiwala Market', time: 'Live Feed', status: 'pending', priority: 'critical', x: 80, y: 80, desc: 'Officer Arun Gowda requesting immediate backup. Active altercation in progress.' };
+                            newIncident = { id: `inc-${Date.now()}`, type: 'assault', location: 'Madiwala Market', time: 'Live Feed', status: 'pending', priority: 'critical', lat: 12.9250, lng: 77.6190, desc: 'Officer Arun Gowda requesting immediate backup. Active altercation in progress.' };
                         }
                         setIncidents([newIncident]);
                     }, 12000);
