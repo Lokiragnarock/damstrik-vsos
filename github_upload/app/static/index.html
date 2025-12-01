@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Damstrik V-OS | Command Centre</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+
+    <!-- Custom Styles -->
+    <link rel="stylesheet" href="/static/styles.css">
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <!-- Leaflet Heatmap -->
+    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'vos-dark': '#0f172a',
+                        'vos-panel': '#1e293b',
+                        'vos-accent': '#3b82f6',
+                        'vos-alert': '#ef4444',
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+
+<body class="bg-vos-dark text-white h-screen overflow-hidden flex">
+    <div class="text-2xl font-mono font-bold text-vos-alert" id="stat-events">0</div>
+    </div>
+    <div class="bg-slate-800/50 p-3 rounded border border-slate-600">
+        <div class="text-xs text-slate-400 uppercase">Assets Online</div>
+        <div class="text-2xl font-mono font-bold text-blue-400" id="stat-assets">0</div>
+    </div>
+    </div>
+
+    <!-- Feed -->
+    <div class="flex-1 overflow-y-auto p-4 space-y-3" id="event-feed">
+        <!-- Event Cards will be injected here -->
+        <div class="text-center text-slate-500 text-sm mt-10 italic">Waiting for incoming telemetry...</div>
+    </div>
+
+    <!-- Footer -->
+    <div class="p-4 border-t border-slate-700 text-xs text-slate-500 font-mono text-center">
+        DAMSTRIK CIVILIAN ONTOLOGY v1.0
+    </div>
+    </div>
+
+    <!-- Main Content Area -->
+    <div class="flex-1 flex flex-col relative z-10 bg-slate-900">
+
+        <!-- Tab Navigation -->
+        <div class="h-12 border-b border-slate-700 flex items-center px-4 gap-4 bg-vos-panel">
+            <button onclick="switchTab('map')" id="tab-map"
+                class="tab-btn text-vos-accent border-b-2 border-vos-accent px-4 py-2 text-sm font-bold">LIVE
+                MAP</button>
+            <button onclick="switchTab('audit')" id="tab-audit"
+                class="tab-btn text-slate-400 hover:text-white px-4 py-2 text-sm font-bold">ASSET AUDIT</button>
+            <button onclick="switchTab('logs')" id="tab-logs"
+                class="tab-btn text-slate-400 hover:text-white px-4 py-2 text-sm font-bold">INGESTION LOGS</button>
+        </div>
+
+        <!-- Tab Contents -->
+        <div class="flex-1 relative overflow-hidden">
+
+            <!-- Map View -->
+            <div id="view-map" class="w-full h-full absolute inset-0"></div>
+
+            <!-- Audit View -->
+            <div id="view-audit" class="w-full h-full absolute inset-0 hidden p-8 overflow-auto">
+                <h2 class="text-2xl font-bold mb-4 text-white">Asset Performance Audit</h2>
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="text-slate-400 border-b border-slate-700 text-sm uppercase">
+                            <th class="p-3">Asset ID</th>
+                            <th class="p-3">Type</th>
+                            <th class="p-3">Status</th>
+                            <th class="p-3">Shift Start</th>
+                            <th class="p-3">Time Worked</th>
+                            <th class="p-3">Fatigue</th>
+                        </tr>
+                    </thead>
+                    <tbody id="audit-table-body" class="text-slate-200 font-mono text-sm">
+                        <!-- Rows injected via JS -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Logs View -->
+            <div id="view-logs" class="w-full h-full absolute inset-0 hidden p-8 overflow-auto">
+                <h2 class="text-2xl font-bold mb-4 text-white">Raw Ingestion Pipeline</h2>
+                <div class="bg-black p-4 rounded border border-slate-700 font-mono text-xs text-green-400 h-full overflow-y-scroll"
+                    id="logs-console">
+                    <!-- Logs injected via JS -->
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="/static/app.js"></script>
+</body>
+
+</html>
