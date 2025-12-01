@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, Circle, useMap } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import {
     Shield, Map as MapIcon, Radio, Users, Bell, Search, Activity, Clock, CheckCircle, AlertTriangle, Zap, Navigation, Battery, Award, ChevronRight, X, Target, Wifi, Database, Play, Pause, Sparkles, BrainCircuit, CloudRain, TrendingUp, FileText, PhoneCall, Mic, Server
 } from 'lucide-react';
@@ -59,15 +62,19 @@ const callGeminiStrategy = async (incident, officer) => {
 // --- ROAD NETWORK GRAPH (Bangalore - Koramangala/Madiwala Layout) ---
 // Nodes represent major intersections. Edges represent roads.
 const ROAD_NODES = {
-    'SonySignal': { x: 70, y: 20, id: 'SonySignal' },
-    'ChristUniv': { x: 48, y: 62, id: 'ChristUniv' },
-    'MadiwalaMkt': { x: 80, y: 80, id: 'MadiwalaMkt' },
-    'Koramangala5th': { x: 25, y: 35, id: 'Koramangala5th' },
-    'ForumMall': { x: 10, y: 10, id: 'ForumMall' },
-    'StJohns': { x: 60, y: 50, id: 'StJohns' }, // Central Hub
-    'DairyCircle': { x: 10, y: 60, id: 'DairyCircle' },
-    'BTMJunction': { x: 50, y: 90, id: 'BTMJunction' },
-    'Indiranagar100ft': { x: 90, y: 10, id: 'Indiranagar100ft' }
+    'SonySignal': { lat: 12.9450, lng: 77.6250, id: 'SonySignal', name: 'Sony World Signal' },
+    'ChristUniv': { lat: 12.9360, lng: 77.6050, id: 'ChristUniv', name: 'Christ University' },
+    'MadiwalaMkt': { lat: 12.9220, lng: 77.6180, id: 'MadiwalaMkt', name: 'Madiwala Market' },
+    'Koramangala5th': { lat: 12.9340, lng: 77.6200, id: 'Koramangala5th', name: 'Koramangala 5th Block' },
+    'ForumMall': { lat: 12.9350, lng: 77.6100, id: 'ForumMall', name: 'Forum Mall' },
+    'StJohns': { lat: 12.9300, lng: 77.6200, id: 'StJohns', name: 'St. Johns Signal' }, // Central Hub
+    'DairyCircle': { lat: 12.9380, lng: 77.6000, id: 'DairyCircle', name: 'Dairy Circle' },
+    'BTMJunction': { lat: 12.9150, lng: 77.6100, id: 'BTMJunction', name: 'BTM Junction' },
+    'Indiranagar100ft': { lat: 12.9600, lng: 77.6400, id: 'Indiranagar100ft', name: 'Indiranagar 100ft' },
+    'WiproPark': { lat: 12.9320, lng: 77.6300, id: 'WiproPark', name: 'Wipro Park' },
+    'Koramangala80ft': { lat: 12.9400, lng: 77.6200, id: 'Koramangala80ft', name: '80ft Road' },
+    'JyotiNivas': { lat: 12.9330, lng: 77.6150, id: 'JyotiNivas', name: 'Jyoti Nivas College' },
+    'CheckPost': { lat: 12.9250, lng: 77.6250, id: 'CheckPost', name: 'Check Post' }
 };
 
 const ROAD_EDGES = [
@@ -93,11 +100,11 @@ ROAD_EDGES.forEach(([a, b]) => {
 });
 
 // Helper: Find nearest road node to any point
-const getNearestNode = (x, y) => {
+const getNearestNode = (lat, lng) => {
     let min = Infinity;
     let nearest = null;
     Object.values(ROAD_NODES).forEach(node => {
-        const d = Math.sqrt((node.x - x) ** 2 + (node.y - y) ** 2);
+        const d = Math.sqrt((node.lat - lat) ** 2 + (node.lng - lng) ** 2);
         if (d < min) {
             min = d;
             nearest = node;
@@ -106,7 +113,7 @@ const getNearestNode = (x, y) => {
     return nearest;
 };
 
-const calculateDistance = (x1, y1, x2, y2) => Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
+const calculateDistance = (lat1, lng1, lat2, lng2) => Math.sqrt(Math.pow(lat2 - lat1, 2) + Math.pow(lng2 - lng1, 2));
 
 // A* Pathfinding
 const findPath = (startNodeId, endNodeId) => {
@@ -121,7 +128,7 @@ const findPath = (startNodeId, endNodeId) => {
     });
 
     gScore[startNodeId] = 0;
-    fScore[startNodeId] = calculateDistance(ROAD_NODES[startNodeId].x, ROAD_NODES[startNodeId].y, ROAD_NODES[endNodeId].x, ROAD_NODES[endNodeId].y);
+    fScore[startNodeId] = calculateDistance(ROAD_NODES[startNodeId].lat, ROAD_NODES[startNodeId].lng, ROAD_NODES[endNodeId].lat, ROAD_NODES[endNodeId].lng);
 
     while (openSet.length > 0) {
         // Get node with lowest fScore
@@ -140,12 +147,12 @@ const findPath = (startNodeId, endNodeId) => {
         openSet.splice(openSet.indexOf(current), 1);
 
         for (let neighbor of ADJ_LIST[current]) {
-            const tentativeGScore = gScore[current] + calculateDistance(ROAD_NODES[current].x, ROAD_NODES[current].y, ROAD_NODES[neighbor].x, ROAD_NODES[neighbor].y);
+            const tentativeGScore = gScore[current] + calculateDistance(ROAD_NODES[current].lat, ROAD_NODES[current].lng, ROAD_NODES[neighbor].lat, ROAD_NODES[neighbor].lng);
 
             if (tentativeGScore < gScore[neighbor]) {
                 cameFrom[neighbor] = current;
                 gScore[neighbor] = tentativeGScore;
-                fScore[neighbor] = gScore[neighbor] + calculateDistance(ROAD_NODES[neighbor].x, ROAD_NODES[neighbor].y, ROAD_NODES[endNodeId].x, ROAD_NODES[endNodeId].y);
+                fScore[neighbor] = gScore[neighbor] + calculateDistance(ROAD_NODES[neighbor].lat, ROAD_NODES[neighbor].lng, ROAD_NODES[endNodeId].lat, ROAD_NODES[endNodeId].lng);
                 if (!openSet.includes(neighbor)) {
                     openSet.push(neighbor);
                 }
@@ -158,10 +165,10 @@ const findPath = (startNodeId, endNodeId) => {
 // --- MOCK BACKEND DATA ---
 
 const ZONES = [
-    { id: 'z1', name: 'Koramangala 5th Block', lat: 12.934, lng: 77.62, risk: 'high', type: 'theft', radius: 18 },
-    { id: 'z2', name: 'SG Palya (Christ Univ)', lat: 12.938, lng: 77.60, risk: 'medium', type: 'public_order', radius: 15 },
-    { id: 'z3', name: 'Sony Signal', lat: 12.945, lng: 77.625, risk: 'low', type: 'traffic', radius: 12 },
-    { id: 'z4', name: 'Madiwala Market', lat: 12.922, lng: 77.618, risk: 'high', type: 'assault', radius: 20 },
+    { id: 'z1', name: 'Koramangala 5th Block', lat: 12.934, lng: 77.62, risk: 'high', type: 'theft', radius: 300 }, // Radius in meters
+    { id: 'z2', name: 'SG Palya (Christ Univ)', lat: 12.938, lng: 77.60, risk: 'medium', type: 'public_order', radius: 250 },
+    { id: 'z3', name: 'Sony Signal', lat: 12.945, lng: 77.625, risk: 'low', type: 'traffic', radius: 200 },
+    { id: 'z4', name: 'Madiwala Market', lat: 12.922, lng: 77.618, risk: 'high', type: 'assault', radius: 350 },
 ];
 
 const INITIAL_OFFICERS = [
@@ -172,7 +179,6 @@ const INITIAL_OFFICERS = [
         skill: ['Public Order', 'Mediation'],
         fatigue: 12,
         status: 'patrol',
-        x: 20, y: 30,
         lat: 12.935, lng: 77.622,
         vehicle: 'Hoysala',
         history: '15 Years Service • 92% Clearance Rate',
@@ -185,7 +191,6 @@ const INITIAL_OFFICERS = [
         skill: ['Theft', 'Surveillance'],
         fatigue: 45,
         status: 'patrol',
-        x: 75, y: 15,
         lat: 12.948, lng: 77.628,
         vehicle: 'Cheetah',
         history: '8 Years Service • 78% Clearance Rate',
@@ -198,7 +203,6 @@ const INITIAL_OFFICERS = [
         skill: ['Women Safety', 'Counseling'],
         fatigue: 5,
         status: 'patrol',
-        x: 45, y: 55,
         lat: 12.936, lng: 77.605,
         vehicle: 'Pink Hoysala',
         history: '4 Years Service • 98% Clearance Rate',
@@ -211,7 +215,6 @@ const INITIAL_OFFICERS = [
         skill: ['Public Order', 'Crowd Control'],
         fatigue: 80,
         status: 'patrol',
-        x: 82, y: 75,
         lat: 12.925, lng: 77.620,
         vehicle: 'Cheetah',
         history: '5 Years Service • 85% Clearance Rate',
@@ -224,7 +227,6 @@ const INITIAL_OFFICERS = [
         skill: ['Narcotics', 'Investigation'],
         fatigue: 30,
         status: 'patrol',
-        x: 65, y: 25,
         lat: 12.942, lng: 77.618,
         vehicle: 'Hoysala',
         history: '10 Years Service • 96% Clearance Rate',
@@ -246,16 +248,19 @@ const CRIME_TYPES = {
 // --- LOGIC HELPERS ---
 
 const calculateFitScore = (officer, incident) => {
-    const dist = calculateDistance(officer.x, officer.y, incident.x, incident.y);
+    const dist = calculateDistance(officer.lat, officer.lng, incident.lat, incident.lng);
 
     // STRICT REQUIREMENT: Proximity ONLY for initial dispatch.
     // "No use of skill if its rampant and running unchecked"
-    const proximityScore = Math.max(0, 100 - dist * 1.5);
+    // Distance is in degrees approx. 0.01 deg ~= 1km.
+    // So 100 - dist * 10000 might be better scale?
+    // Let's just normalize it roughly. 0.05 deg is far.
+    const proximityScore = Math.max(0, 100 - dist * 2000);
 
     return {
         score: Math.round(proximityScore), // Pure proximity score
         breakdown: { proximity: Math.round(proximityScore), skill: 0, fatigue: 0 },
-        distance: Math.round(dist * 10)
+        distance: Math.round(dist * 111000) // Approx meters
     };
 };
 
@@ -267,29 +272,9 @@ const RadarScanner = () => (
     </div>
 );
 
+// Leaflet handles routes, so we don't need this SVG overlay anymore, but keeping it as null for now to avoid breaking references
 const RouteLine = ({ path }) => {
-    if (!path || path.length < 2) return null;
-
-    // Convert path of Node IDs to SVG points
-    const points = path.map(id => {
-        const node = ROAD_NODES[id];
-        return `${node.x},${node.y}`; // SVG uses comma
-    }).join(' ');
-
-    // We need to scale these % coordinates to the SVG viewbox (0-100)
-    return (
-        <svg className="absolute inset-0 w-full h-full pointer-events-none z-10" viewBox="0 0 100 100" preserveAspectRatio="none">
-            <polyline
-                points={points}
-                fill="none"
-                stroke="#22c55e"
-                strokeWidth="0.5"
-                strokeDasharray="1,1"
-                className="animate-pulse opacity-80"
-            />
-            <circle cx={ROAD_NODES[path[path.length - 1]].x} cy={ROAD_NODES[path[path.length - 1]].y} r="1" fill="#22c55e" className="animate-ping" />
-        </svg>
-    );
+    return null;
 };
 
 const IngestionLogs = ({ logs }) => {
@@ -352,15 +337,15 @@ export default function App() {
     }, []);
 
     // --- LOGIC: REPOSITION OTHERS (COVERAGE ALGO) ---
-    const repositionOthers = useCallback((dispatchedOfficerId, targetX, targetY) => {
+    const repositionOthers = useCallback((dispatchedOfficerId, targetLat, targetLng) => {
         setOfficers(prev => prev.map(o => {
             if (o.id === dispatchedOfficerId || o.status === 'busy') return o;
 
             // Move towards nearest road node to stay "on grid"
-            const nearestNode = getNearestNode(o.x, o.y);
+            const nearestNode = getNearestNode(o.lat, o.lng);
             if (nearestNode) {
                 // Slowly drift to nearest intersection if idle
-                return { ...o, x: o.x + (nearestNode.x - o.x) * 0.05, y: o.y + (nearestNode.y - o.y) * 0.05 };
+                return { ...o, lat: o.lat + (nearestNode.lat - o.lat) * 0.05, lng: o.lng + (nearestNode.lng - o.lng) * 0.05 };
             }
             return o;
         }));
@@ -381,15 +366,15 @@ export default function App() {
             }
 
             // 1. Calculate Path on Road Network
-            const startNode = getNearestNode(officer.x, officer.y);
-            const endNode = getNearestNode(incident.x, incident.y);
+            const startNode = getNearestNode(officer.lat, officer.lng);
+            const endNode = getNearestNode(incident.lat, incident.lng);
             const pathIds = findPath(startNode.id, endNode.id);
 
             // Store route for visualization
             setActiveRoutes(prev => ({ ...prev, [incident.id]: pathIds }));
 
             // 2. Trigger Repositioning
-            repositionOthers(officerId, officer.x, officer.y);
+            repositionOthers(officerId, officer.lat, officer.lng);
 
             // 3. Update Status
             setOfficers(prev => prev.map(o => o.id === officerId ? { ...o, status: 'busy' } : o));
@@ -400,14 +385,14 @@ export default function App() {
 
             // Waypoints for curved roads (approximate visual path)
             const ROAD_WAYPOINTS = {
-                'SonySignal-StJohns': [{ x: 68, y: 30 }, { x: 65, y: 40 }], // 80ft road bend
-                'StJohns-SonySignal': [{ x: 65, y: 40 }, { x: 68, y: 30 }],
-                'SonySignal-Indiranagar100ft': [{ x: 75, y: 15 }, { x: 85, y: 12 }], // Domlur Flyover
-                'Indiranagar100ft-SonySignal': [{ x: 85, y: 12 }, { x: 75, y: 15 }],
-                'StJohns-MadiwalaMkt': [{ x: 65, y: 60 }, { x: 70, y: 70 }], // Hosur Road
-                'MadiwalaMkt-StJohns': [{ x: 70, y: 70 }, { x: 65, y: 60 }],
-                'ChristUniv-StJohns': [{ x: 52, y: 58 }, { x: 56, y: 54 }],
-                'StJohns-ChristUniv': [{ x: 56, y: 54 }, { x: 52, y: 58 }]
+                'SonySignal-StJohns': [{ lat: 12.9400, lng: 77.6240 }, { lat: 12.9350, lng: 77.6230 }],
+                'StJohns-SonySignal': [{ lat: 12.9350, lng: 77.6230 }, { lat: 12.9400, lng: 77.6240 }],
+                'SonySignal-Indiranagar100ft': [{ lat: 12.9500, lng: 77.6300 }, { lat: 12.9550, lng: 77.6350 }],
+                'Indiranagar100ft-SonySignal': [{ lat: 12.9550, lng: 77.6350 }, { lat: 12.9500, lng: 77.6300 }],
+                'StJohns-CheckPost': [{ lat: 12.9280, lng: 77.6220 }],
+                'CheckPost-StJohns': [{ lat: 12.9280, lng: 77.6220 }],
+                'MadiwalaMkt-StJohns': [{ lat: 12.9250, lng: 77.6190 }],
+                'StJohns-MadiwalaMkt': [{ lat: 12.9250, lng: 77.6190 }]
             };
 
             let currentPathIndex = 0;
@@ -421,7 +406,7 @@ export default function App() {
                     setTimeout(() => {
                         setOfficers(prev => prev.map(o => {
                             if (o.id === officerId) {
-                                return { ...o, status: 'patrol', x: incident.x, y: incident.y };
+                                return { ...o, status: 'patrol', lat: incident.lat, lng: incident.lng };
                             }
                             return o;
                         }));
@@ -444,35 +429,34 @@ export default function App() {
                 const waypoints = ROAD_WAYPOINTS[edgeKey] || [];
 
                 // Construct full segment path: [Waypoints..., TargetNode]
-                const segmentPoints = [...waypoints, { x: targetNode.x, y: targetNode.y }];
+                const segmentPoints = [...waypoints, { lat: targetNode.lat, lng: targetNode.lng }];
 
                 let segmentIndex = 0;
 
                 const animateSegment = () => {
                     if (segmentIndex >= segmentPoints.length) {
-                        // Done with this edge, move to next node in path
                         currentPathIndex++;
                         moveAlongPath();
                         return;
                     }
 
                     const targetPoint = segmentPoints[segmentIndex];
-                    const steps = 30; // Faster steps for smoother curves (0.5s per sub-segment)
+                    const steps = 60; // 1 second per segment
                     let step = 0;
 
-                    const interval = setInterval(() => {
+                    const segmentInterval = setInterval(() => {
                         step++;
                         setOfficers(prev => prev.map(o => {
                             if (o.id === officerId) {
-                                const dx = (targetPoint.x - o.x) / (steps - step + 1);
-                                const dy = (targetPoint.y - o.y) / (steps - step + 1);
-                                return { ...o, x: o.x + dx, y: o.y + dy };
+                                const dLat = (targetPoint.lat - o.lat) / (steps - step + 1);
+                                const dLng = (targetPoint.lng - o.lng) / (steps - step + 1);
+                                return { ...o, lat: o.lat + dLat, lng: o.lng + dLng };
                             }
                             return o;
                         }));
 
                         if (step >= steps) {
-                            clearInterval(interval);
+                            clearInterval(segmentInterval);
                             segmentIndex++;
                             animateSegment();
                         }
@@ -484,12 +468,7 @@ export default function App() {
 
             moveAlongPath();
 
-            setDispatching(false);
-            setShowDispatchModal(false);
-            setSelectedIncident(null);
-            setAiAdvice(null);
-            addLog(`Unit dispatched. Route: ${pathIds.join(' -> ')}`, 'text-green-400');
-        }, 1500);
+        }, 2000);
     }, [addLog, officers, incidents, repositionOthers]);
 
     // --- LOGIC: TRIGGER AI ADVICE ---
@@ -709,20 +688,62 @@ export default function App() {
 
                 {/* CENTER MAP */}
                 <div className="col-span-6 relative bg-slate-950 overflow-hidden group flex flex-col">
-                    <div className="flex-1 relative">
-                        {/* REAL MAP BACKGROUND */}
-                        <div className="absolute inset-0 z-0 opacity-40 grayscale invert contrast-125 brightness-75">
-                            <iframe
-                                width="100%"
-                                height="100%"
-                                style={{ border: 0 }}
-                                loading="lazy"
-                                allowFullScreen
-                                src="https://www.google.com/maps/embed?pb=!1m14!1m12!1m3!1d15554.336474149234!2d77.615!3d12.935!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!5e0!3m2!1sen!2sin!4v1700000000000!5m2!1sen!2sin&maptype=satellite"
-                            ></iframe>
-                        </div>
+                    <div className="flex-1 relative z-0">
+                        <MapContainer
+                            center={[12.935, 77.62]}
+                            zoom={14}
+                            style={{ height: '100%', width: '100%', background: '#0f172a' }}
+                            zoomControl={false}
+                        >
+                            <TileLayer
+                                url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                                attribution='&copy; <a href="https://carto.com/attributions">CARTO</a>'
+                            />
 
-                        <div className="absolute inset-0 z-10 bg-blue-900/10 pointer-events-none"></div>
+                            {/* ZONES */}
+                            {heatmapMode && ZONES.map(zone => (
+                                <Circle
+                                    key={zone.id}
+                                    center={[zone.lat, zone.lng]}
+                                    radius={zone.radius}
+                                    pathOptions={{
+                                        color: CRIME_TYPES[zone.type].mapColor,
+                                        fillColor: CRIME_TYPES[zone.type].mapColor,
+                                        fillOpacity: 0.2,
+                                        weight: 1
+                                    }}
+                                />
+                            ))}
+
+                            {/* ROUTES */}
+                            {Object.entries(activeRoutes).map(([incId, pathIds]) => {
+                                const positions = pathIds.map(id => [ROAD_NODES[id].lat, ROAD_NODES[id].lng]);
+                                return <Polyline key={incId} positions={positions} pathOptions={{ color: '#22c55e', dashArray: '5, 10', weight: 2 }} />;
+                            })}
+
+                            {/* OFFICERS */}
+                            {patrolCarMode && officers.map(officer => (
+                                <Marker
+                                    key={officer.id}
+                                    position={[officer.lat, officer.lng]}
+                                    icon={L.divIcon({
+                                        className: 'custom-leaflet-icon',
+                                        html: `<div class="relative w-8 h-8 flex items-center justify-center">
+                                                 <div class="w-8 h-8 rounded-full border-2 ${officer.status === 'busy' ? 'bg-blue-600 border-white shadow-[0_0_15px_rgba(37,99,235,0.8)]' : 'bg-slate-900 border-blue-500 shadow-[0_0_10px_rgba(0,0,0,0.5)]'} flex items-center justify-center transition-all">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="transform ${officer.status === 'busy' ? 'animate-pulse' : 'rotate-45'}"><polygon points="3 11 22 2 13 21 11 13 3 11"></polygon></svg>
+                                                 </div>
+                                               </div>`,
+                                        iconSize: [32, 32],
+                                        iconAnchor: [16, 16]
+                                    })}
+                                    eventHandlers={{
+                                        click: () => handleOfficerClick(officer),
+                                    }}
+                                />
+                            ))}
+                        </MapContainer>
+
+                        <div className="absolute inset-0 z-10 bg-blue-900/5 pointer-events-none"></div>
                         <RadarScanner />
 
                         {/* Controls */}
@@ -741,98 +762,6 @@ export default function App() {
                                 <Navigation className="w-3 h-3 inline mr-2" />
                                 PATROL CARS
                             </button>
-                        </div>
-
-                        {/* Active Routes */}
-                        {Object.entries(activeRoutes).map(([incId, path]) => (
-                            <RouteLine key={`route-${incId}`} path={path} />
-                        ))}
-
-                        {/* Map Objects */}
-                        <div className="absolute inset-0 z-20 pointer-events-none">
-                            {heatmapMode && ZONES.map(zone => (
-                                <div
-                                    key={zone.id}
-                                    className="absolute rounded-full blur-2xl opacity-40 animate-pulse mix-blend-screen"
-                                    style={{
-                                        left: `${zone.lng * 100 - 7755}%`,
-                                        top: `${(1298 - zone.lat * 100) * 2}%`,
-                                        width: `${zone.radius * 15}px`,
-                                        height: `${zone.radius * 15}px`,
-                                        transform: 'translate(-50%, -50%)',
-                                        backgroundColor: CRIME_TYPES[zone.type].mapColor
-                                    }}
-                                ></div>
-                            ))}
-
-                            {patrolCarMode && officers.map(officer => (
-                                <div
-                                    key={officer.id}
-                                    className="absolute transition-all duration-100 ease-linear group/marker pointer-events-auto"
-                                    style={{ left: `${officer.x}%`, top: `${officer.y}%` }}
-                                    onClick={() => handleOfficerClick(officer)}
-                                >
-                                    <div className="relative -translate-x-1/2 -translate-y-1/2 cursor-pointer">
-                                        <div className={`w-8 h-8 rounded-full border-2 ${officer.status === 'busy' ? 'bg-blue-600 border-white shadow-[0_0_15px_rgba(37,99,235,0.8)]' : 'bg-slate-900 border-blue-500 shadow-[0_0_10px_rgba(0,0,0,0.5)]'} flex items-center justify-center z-20 relative transition-all`}>
-                                            <Navigation className={`w-4 h-4 text-white transform ${officer.status === 'busy' ? 'rotate-0 animate-pulse' : 'rotate-45'}`} />
-                                        </div>
-                                        <div className="absolute top-10 left-1/2 -translate-x-1/2 bg-slate-900/90 border border-slate-700 px-2 py-1 rounded text-[9px] font-bold whitespace-nowrap text-white opacity-0 group-hover/marker:opacity-100 transition-opacity pointer-events-none z-30 shadow-lg">
-                                            {officer.name}
-                                        </div>
-                                        {officer.status === 'patrol' && <div className="absolute inset-0 rounded-full border border-blue-500/30 animate-ping"></div>}
-                                    </div>
-                                </div>
-                            ))}
-
-                            {incidents.map(inc => (
-                                <div
-                                    key={inc.id}
-                                    className="absolute z-30 cursor-pointer"
-                                    style={{ left: `${inc.x}%`, top: `${inc.y}%` }}
-                                    onClick={() => {
-                                        if (inc.status !== 'assigned') {
-                                            setSelectedIncident(inc);
-                                            setShowDispatchModal(true);
-                                        }
-                                    }}
-                                >
-                                    <div className="relative -translate-x-1/2 -translate-y-1/2 group/incident">
-                                        <div className="absolute inset-[-20px] bg-red-500/20 rounded-full animate-ping"></div>
-                                        <div className="absolute inset-[-10px] bg-red-500/30 rounded-full animate-pulse"></div>
-                                        <div className={`w-10 h-10 rounded-full border-2 ${inc.status === 'assigned' ? 'bg-green-600 border-white' : 'bg-red-600 border-white animate-bounce'} flex items-center justify-center shadow-[0_0_25px_rgba(239,68,68,0.8)]`}>
-                                            {inc.status === 'assigned' ? <CheckCircle className="w-5 h-5 text-white" /> : <AlertTriangle className="w-5 h-5 text-white" />}
-                                        </div>
-                                        <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-red-600 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-sm whitespace-nowrap uppercase tracking-wider">
-                                            {CRIME_TYPES[inc.type].label}
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-
-                        {/* Overlay Stats */}
-                        <div className="absolute bottom-6 left-6 right-6 flex justify-between items-end pointer-events-none z-30">
-                            <div className="bg-slate-900/90 backdrop-blur border border-slate-700 p-3 rounded-lg text-xs font-mono text-slate-400 shadow-xl">
-                                <div className="flex items-center gap-2 mb-1">
-                                    <Target className="w-3 h-3 text-blue-400" />
-                                    <span className="font-bold text-white">GRID: SG_PALYA_SEC_04</span>
-                                </div>
-                                <div>ZONAL RISK: MODERATE</div>
-                            </div>
-                            <div className="bg-slate-900/90 backdrop-blur border border-slate-700 p-3 rounded-lg flex items-center gap-4 shadow-xl">
-                                <div className="flex items-center gap-2">
-                                    <div className="w-2 h-2 bg-red-500 rounded-full shadow-[0_0_5px_rgba(239,68,68,0.8)]"></div>
-                                    <span className="text-xs font-bold text-slate-300">INCIDENT</span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <div className="w-2 h-2 bg-blue-500 rounded-full shadow-[0_0_5px_rgba(59,130,246,0.8)]"></div>
-                                    <span className="text-xs font-bold text-slate-300">UNIT</span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <div className="w-2 h-2 bg-purple-500 rounded-full shadow-[0_0_5px_rgba(168,85,247,0.8)]"></div>
-                                    <span className="text-xs font-bold text-slate-300">PREDICTED</span>
-                                </div>
-                            </div>
                         </div>
                     </div>
 
@@ -906,192 +835,196 @@ export default function App() {
             </div>
 
             {/* DISPATCH MODAL */}
-            {showDispatchModal && selectedIncident && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="bg-slate-900 w-full max-w-3xl rounded-2xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-300">
+            {
+                showDispatchModal && selectedIncident && (
+                    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                        <div className="bg-slate-900 w-full max-w-3xl rounded-2xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-300">
 
-                        {/* Header */}
-                        <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-800/50">
-                            <div>
-                                <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                                    <Zap className="w-5 h-5 text-yellow-400 fill-current animate-pulse" />
-                                    AI Response Recommendation
-                                </h2>
-                                <p className="text-xs text-slate-400 font-mono mt-1 tracking-wider">GENESIS ONTOLOGY ENGINE • V2.4</p>
-                            </div>
-                            {!demoMode && (
-                                <button onClick={() => setShowDispatchModal(false)} className="text-slate-400 hover:text-white transition-colors">
-                                    <X className="w-6 h-6" />
-                                </button>
-                            )}
-                        </div>
-
-                        {/* AI Breakdown */}
-                        <div className="flex-1 overflow-y-auto p-6 bg-slate-950/50">
-
-                            {/* --- NEW GEMINI AI SECTION --- */}
-                            <div className="mb-6 p-4 rounded-xl border border-blue-500/30 bg-blue-900/10">
-                                <div className="flex items-center gap-2 mb-2">
-                                    <Sparkles className="w-4 h-4 text-purple-400 animate-pulse" />
-                                    <span className="text-xs font-bold text-blue-300 uppercase tracking-wider">Tactical Analysis (Gemini 2.5)</span>
+                            {/* Header */}
+                            <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-800/50">
+                                <div>
+                                    <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                                        <Zap className="w-5 h-5 text-yellow-400 fill-current animate-pulse" />
+                                        AI Response Recommendation
+                                    </h2>
+                                    <p className="text-xs text-slate-400 font-mono mt-1 tracking-wider">GENESIS ONTOLOGY ENGINE • V2.4</p>
                                 </div>
-                                {generatingAdvice ? (
-                                    <div className="flex items-center gap-3 text-slate-400 text-xs py-2">
-                                        <BrainCircuit className="w-4 h-4 animate-spin text-blue-500" />
-                                        Running Strategic Assessment...
-                                    </div>
-                                ) : aiAdvice ? (
-                                    <div className="text-sm text-slate-200 leading-relaxed font-mono whitespace-pre-line">
-                                        {aiAdvice}
-                                    </div>
-                                ) : (
-                                    <button
-                                        onClick={() => triggerAiAnalysis(selectedIncident, recommendedOfficers[0])}
-                                        className="text-xs bg-slate-800 hover:bg-slate-700 text-blue-400 px-3 py-1.5 rounded border border-slate-600 transition-colors"
-                                    >
-                                        Generate Tactical Strategy
+                                {!demoMode && (
+                                    <button onClick={() => setShowDispatchModal(false)} className="text-slate-400 hover:text-white transition-colors">
+                                        <X className="w-6 h-6" />
                                     </button>
                                 )}
                             </div>
 
-                            <div className="mb-6 grid grid-cols-3 gap-4">
-                                <div className="bg-slate-800 p-3 rounded-lg border border-slate-700">
-                                    <div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Incident Profile</div>
-                                    <div className={`text-sm font-bold ${CRIME_TYPES[selectedIncident.type].color}`}>{CRIME_TYPES[selectedIncident.type].label}</div>
-                                </div>
-                                <div className="bg-slate-800 p-3 rounded-lg border border-slate-700">
-                                    <div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Location Risk</div>
-                                    <div className="text-sm font-bold text-red-400">High Density Zone</div>
-                                </div>
-                                <div className="bg-slate-800 p-3 rounded-lg border border-slate-700">
-                                    <div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Required Asset</div>
-                                    <div className="text-sm font-bold text-white">Patrol + CCTV Link</div>
-                                </div>
-                            </div>
+                            {/* AI Breakdown */}
+                            <div className="flex-1 overflow-y-auto p-6 bg-slate-950/50">
 
-                            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Available Units (Ranked by AI)</h3>
+                                {/* --- NEW GEMINI AI SECTION --- */}
+                                <div className="mb-6 p-4 rounded-xl border border-blue-500/30 bg-blue-900/10">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <Sparkles className="w-4 h-4 text-purple-400 animate-pulse" />
+                                        <span className="text-xs font-bold text-blue-300 uppercase tracking-wider">Tactical Analysis (Gemini 2.5)</span>
+                                    </div>
+                                    {generatingAdvice ? (
+                                        <div className="flex items-center gap-3 text-slate-400 text-xs py-2">
+                                            <BrainCircuit className="w-4 h-4 animate-spin text-blue-500" />
+                                            Running Strategic Assessment...
+                                        </div>
+                                    ) : aiAdvice ? (
+                                        <div className="text-sm text-slate-200 leading-relaxed font-mono whitespace-pre-line">
+                                            {aiAdvice}
+                                        </div>
+                                    ) : (
+                                        <button
+                                            onClick={() => triggerAiAnalysis(selectedIncident, recommendedOfficers[0])}
+                                            className="text-xs bg-slate-800 hover:bg-slate-700 text-blue-400 px-3 py-1.5 rounded border border-slate-600 transition-colors"
+                                        >
+                                            Generate Tactical Strategy
+                                        </button>
+                                    )}
+                                </div>
 
-                            <div className="space-y-3">
-                                {recommendedOfficers.map((match, idx) => (
-                                    <div key={match.id} className={`group relative p-4 rounded-xl border transition-all duration-300 ${idx === 0 ? 'bg-blue-900/10 border-blue-500/50 shadow-[0_0_15px_rgba(59,130,246,0.1)] scale-[1.01]' : 'bg-slate-800/50 border-slate-700 hover:bg-slate-800'}`}>
-                                        {idx === 0 && (
-                                            <div className="absolute -top-2.5 right-4 bg-blue-600 text-white text-[10px] font-bold px-3 py-0.5 rounded-full shadow-lg border border-blue-400 flex items-center gap-1">
-                                                <Award className="w-3 h-3" /> BEST FIT
-                                            </div>
-                                        )}
+                                <div className="mb-6 grid grid-cols-3 gap-4">
+                                    <div className="bg-slate-800 p-3 rounded-lg border border-slate-700">
+                                        <div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Incident Profile</div>
+                                        <div className={`text-sm font-bold ${CRIME_TYPES[selectedIncident.type].color}`}>{CRIME_TYPES[selectedIncident.type].label}</div>
+                                    </div>
+                                    <div className="bg-slate-800 p-3 rounded-lg border border-slate-700">
+                                        <div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Location Risk</div>
+                                        <div className="text-sm font-bold text-red-400">High Density Zone</div>
+                                    </div>
+                                    <div className="bg-slate-800 p-3 rounded-lg border border-slate-700">
+                                        <div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Required Asset</div>
+                                        <div className="text-sm font-bold text-white">Patrol + CCTV Link</div>
+                                    </div>
+                                </div>
 
-                                        <div className="flex justify-between items-center">
-                                            <div className="flex items-center gap-5">
-                                                {/* Score Gauge */}
-                                                <div className="relative w-14 h-14 flex items-center justify-center">
-                                                    <svg className="w-full h-full transform -rotate-90">
-                                                        <circle cx="28" cy="28" r="24" stroke="#1e293b" strokeWidth="4" fill="none" />
-                                                        <circle cx="28" cy="28" r="24" stroke="currentColor" strokeWidth="4" fill="none"
-                                                            strokeDasharray={150}
-                                                            strokeDashoffset={150 - (150 * match.score) / 100}
-                                                            className={`${match.score > 80 ? 'text-emerald-500' : 'text-yellow-500'} transition-all duration-1000`}
-                                                        />
-                                                    </svg>
-                                                    <span className="absolute text-sm font-bold text-white">{match.score}</span>
+                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Available Units (Ranked by AI)</h3>
+
+                                <div className="space-y-3">
+                                    {recommendedOfficers.map((match, idx) => (
+                                        <div key={match.id} className={`group relative p-4 rounded-xl border transition-all duration-300 ${idx === 0 ? 'bg-blue-900/10 border-blue-500/50 shadow-[0_0_15px_rgba(59,130,246,0.1)] scale-[1.01]' : 'bg-slate-800/50 border-slate-700 hover:bg-slate-800'}`}>
+                                            {idx === 0 && (
+                                                <div className="absolute -top-2.5 right-4 bg-blue-600 text-white text-[10px] font-bold px-3 py-0.5 rounded-full shadow-lg border border-blue-400 flex items-center gap-1">
+                                                    <Award className="w-3 h-3" /> BEST FIT
                                                 </div>
+                                            )}
 
-                                                <div>
-                                                    <h4 className="text-base font-bold text-white group-hover:text-blue-400 transition-colors">{match.name}</h4>
-                                                    <div className="flex items-center gap-3 text-xs text-slate-400 mt-1">
-                                                        <span className="flex items-center gap-1"><Navigation className="w-3 h-3" /> {match.distance}m away</span>
-                                                        <span className="flex items-center gap-1"><Battery className="w-3 h-3" /> {match.fatigue}% Fatigue</span>
+                                            <div className="flex justify-between items-center">
+                                                <div className="flex items-center gap-5">
+                                                    {/* Score Gauge */}
+                                                    <div className="relative w-14 h-14 flex items-center justify-center">
+                                                        <svg className="w-full h-full transform -rotate-90">
+                                                            <circle cx="28" cy="28" r="24" stroke="#1e293b" strokeWidth="4" fill="none" />
+                                                            <circle cx="28" cy="28" r="24" stroke="currentColor" strokeWidth="4" fill="none"
+                                                                strokeDasharray={150}
+                                                                strokeDashoffset={150 - (150 * match.score) / 100}
+                                                                className={`${match.score > 80 ? 'text-emerald-500' : 'text-yellow-500'} transition-all duration-1000`}
+                                                            />
+                                                        </svg>
+                                                        <span className="absolute text-sm font-bold text-white">{match.score}</span>
+                                                    </div>
+
+                                                    <div>
+                                                        <h4 className="text-base font-bold text-white group-hover:text-blue-400 transition-colors">{match.name}</h4>
+                                                        <div className="flex items-center gap-3 text-xs text-slate-400 mt-1">
+                                                            <span className="flex items-center gap-1"><Navigation className="w-3 h-3" /> {match.distance}m away</span>
+                                                            <span className="flex items-center gap-1"><Battery className="w-3 h-3" /> {match.fatigue}% Fatigue</span>
+                                                        </div>
                                                     </div>
                                                 </div>
+
+                                                <button
+                                                    onClick={() => handleDispatch(match.id)}
+                                                    disabled={dispatching || (demoMode && idx !== 0)} // In demo mode, only top rank works automatically
+                                                    className={`px-5 py-2.5 text-white text-xs font-bold uppercase tracking-wider rounded-lg transition-all flex items-center gap-2 ${dispatching && idx === 0 ? 'bg-emerald-600' : 'bg-slate-700 hover:bg-blue-600'}`}
+                                                >
+                                                    {dispatching && idx === 0 ? (
+                                                        <>
+                                                            <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                                            Syncing...
+                                                        </>
+                                                    ) : (
+                                                        <>Dispatch Unit <ChevronRight className="w-4 h-4" /></>
+                                                    )}
+                                                </button>
                                             </div>
 
-                                            <button
-                                                onClick={() => handleDispatch(match.id)}
-                                                disabled={dispatching || (demoMode && idx !== 0)} // In demo mode, only top rank works automatically
-                                                className={`px-5 py-2.5 text-white text-xs font-bold uppercase tracking-wider rounded-lg transition-all flex items-center gap-2 ${dispatching && idx === 0 ? 'bg-emerald-600' : 'bg-slate-700 hover:bg-blue-600'}`}
-                                            >
-                                                {dispatching && idx === 0 ? (
-                                                    <>
-                                                        <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                                                        Syncing...
-                                                    </>
-                                                ) : (
-                                                    <>Dispatch Unit <ChevronRight className="w-4 h-4" /></>
+                                            {/* Explainability Tags */}
+                                            <div className="mt-3 pl-[4.5rem] flex gap-2">
+                                                {match.breakdown.skill === 100 && (
+                                                    <span className="flex items-center gap-1 text-[10px] bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded border border-emerald-500/20">
+                                                        <CheckCircle className="w-3 h-3" /> Skill Match
+                                                    </span>
                                                 )}
-                                            </button>
+                                                {match.distance < 30 && (
+                                                    <span className="flex items-center gap-1 text-[10px] bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded border border-blue-500/20">
+                                                        <MapIcon className="w-3 h-3" /> High Proximity
+                                                    </span>
+                                                )}
+                                            </div>
                                         </div>
-
-                                        {/* Explainability Tags */}
-                                        <div className="mt-3 pl-[4.5rem] flex gap-2">
-                                            {match.breakdown.skill === 100 && (
-                                                <span className="flex items-center gap-1 text-[10px] bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded border border-emerald-500/20">
-                                                    <CheckCircle className="w-3 h-3" /> Skill Match
-                                                </span>
-                                            )}
-                                            {match.distance < 30 && (
-                                                <span className="flex items-center gap-1 text-[10px] bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded border border-blue-500/20">
-                                                    <MapIcon className="w-3 h-3" /> High Proximity
-                                                </span>
-                                            )}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* OFFICER DETAIL MODAL */}
-            {showOfficerModal && selectedOfficer && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="bg-slate-900 w-full max-w-lg rounded-2xl border border-slate-700 shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
-                        <div className="p-6 border-b border-slate-800 flex justify-between items-start bg-slate-800/50">
-                            <div className="flex items-center gap-4">
-                                <div className="w-12 h-12 bg-slate-700 rounded-full flex items-center justify-center border border-slate-600">
-                                    <span className="text-xl font-bold text-white">{selectedOfficer.name.charAt(0)}</span>
-                                </div>
-                                <div>
-                                    <h2 className="text-xl font-bold text-white">{selectedOfficer.name}</h2>
-                                    <p className="text-xs text-slate-400">{selectedOfficer.badge} • {selectedOfficer.vehicle}</p>
-                                </div>
-                            </div>
-                            <button onClick={() => setShowOfficerModal(false)} className="text-slate-400 hover:text-white">
-                                <X className="w-6 h-6" />
-                            </button>
-                        </div>
-                        <div className="p-6 space-y-4">
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="bg-slate-800 p-3 rounded-lg border border-slate-700">
-                                    <div className="text-[10px] uppercase text-slate-500 font-bold mb-1">Service History</div>
-                                    <div className="text-sm font-semibold text-white">{selectedOfficer.history}</div>
-                                </div>
-                                <div className="bg-slate-800 p-3 rounded-lg border border-slate-700">
-                                    <div className="text-[10px] uppercase text-slate-500 font-bold mb-1">Fatigue</div>
-                                    <div className={`text-sm font-semibold ${selectedOfficer.fatigue > 50 ? 'text-yellow-400' : 'text-green-400'}`}>{selectedOfficer.fatigue}%</div>
-                                </div>
-                            </div>
-                            <div>
-                                <h4 className="text-sm font-bold text-slate-300 mb-2 flex items-center gap-2"><Award className="w-4 h-4 text-blue-400" /> Specialization</h4>
-                                <div className="flex flex-wrap gap-2 mb-2">
-                                    {selectedOfficer.skill.map(s => (
-                                        <span key={s} className="px-2 py-1 bg-blue-900/30 text-blue-400 text-xs rounded border border-blue-900/50">{s}</span>
                                     ))}
                                 </div>
-                                <p className="text-xs text-slate-400 leading-relaxed bg-slate-950 p-3 rounded border border-slate-800">
-                                    {selectedOfficer.specialization_desc}
-                                </p>
-                            </div>
-                            <div>
-                                <h4 className="text-sm font-bold text-slate-300 mb-2 flex items-center gap-2"><FileText className="w-4 h-4 text-purple-400" /> Recent Activity</h4>
-                                <ul className="text-xs text-slate-400 space-y-2">
-                                    <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div> Resolved public dispute at SG Palya (2h ago)</li>
-                                    <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 bg-blue-500 rounded-full"></div> Routine patrol check at Sony Signal (4h ago)</li>
-                                </ul>
                             </div>
                         </div>
                     </div>
-                </div>
-            )}
-        </div>
+                )
+            }
+
+            {/* OFFICER DETAIL MODAL */}
+            {
+                showOfficerModal && selectedOfficer && (
+                    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                        <div className="bg-slate-900 w-full max-w-lg rounded-2xl border border-slate-700 shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+                            <div className="p-6 border-b border-slate-800 flex justify-between items-start bg-slate-800/50">
+                                <div className="flex items-center gap-4">
+                                    <div className="w-12 h-12 bg-slate-700 rounded-full flex items-center justify-center border border-slate-600">
+                                        <span className="text-xl font-bold text-white">{selectedOfficer.name.charAt(0)}</span>
+                                    </div>
+                                    <div>
+                                        <h2 className="text-xl font-bold text-white">{selectedOfficer.name}</h2>
+                                        <p className="text-xs text-slate-400">{selectedOfficer.badge} • {selectedOfficer.vehicle}</p>
+                                    </div>
+                                </div>
+                                <button onClick={() => setShowOfficerModal(false)} className="text-slate-400 hover:text-white">
+                                    <X className="w-6 h-6" />
+                                </button>
+                            </div>
+                            <div className="p-6 space-y-4">
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="bg-slate-800 p-3 rounded-lg border border-slate-700">
+                                        <div className="text-[10px] uppercase text-slate-500 font-bold mb-1">Service History</div>
+                                        <div className="text-sm font-semibold text-white">{selectedOfficer.history}</div>
+                                    </div>
+                                    <div className="bg-slate-800 p-3 rounded-lg border border-slate-700">
+                                        <div className="text-[10px] uppercase text-slate-500 font-bold mb-1">Fatigue</div>
+                                        <div className={`text-sm font-semibold ${selectedOfficer.fatigue > 50 ? 'text-yellow-400' : 'text-green-400'}`}>{selectedOfficer.fatigue}%</div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <h4 className="text-sm font-bold text-slate-300 mb-2 flex items-center gap-2"><Award className="w-4 h-4 text-blue-400" /> Specialization</h4>
+                                    <div className="flex flex-wrap gap-2 mb-2">
+                                        {selectedOfficer.skill.map(s => (
+                                            <span key={s} className="px-2 py-1 bg-blue-900/30 text-blue-400 text-xs rounded border border-blue-900/50">{s}</span>
+                                        ))}
+                                    </div>
+                                    <p className="text-xs text-slate-400 leading-relaxed bg-slate-950 p-3 rounded border border-slate-800">
+                                        {selectedOfficer.specialization_desc}
+                                    </p>
+                                </div>
+                                <div>
+                                    <h4 className="text-sm font-bold text-slate-300 mb-2 flex items-center gap-2"><FileText className="w-4 h-4 text-purple-400" /> Recent Activity</h4>
+                                    <ul className="text-xs text-slate-400 space-y-2">
+                                        <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div> Resolved public dispute at SG Palya (2h ago)</li>
+                                        <li className="flex items-center gap-2"><div className="w-1.5 h-1.5 bg-blue-500 rounded-full"></div> Routine patrol check at Sony Signal (4h ago)</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
+        </div >
     );
 }
