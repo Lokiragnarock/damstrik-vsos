@@ -34,6 +34,22 @@ const MapLayer = ({ officers, incidents, activeRoutes, heatmapMode, patrolCarMod
                     />
                 ))}
 
+                {/* CRIME HEATMAP - Translucent overlay */}
+                {incidents.map(inc => (
+                    <Circle
+                        key={`heatmap-${inc.id}`}
+                        center={[inc.lat, inc.lng]}
+                        radius={300}
+                        pathOptions={{
+                            color: inc.status === 'assigned' ? '#10b981' : '#ef4444',
+                            fillColor: inc.status === 'assigned' ? '#10b981' : '#ef4444',
+                            fillOpacity: 0.2,
+                            weight: 0,
+                            className: inc.status === 'assigned' ? '' : 'animate-pulse'
+                        }}
+                    />
+                ))}
+
                 {/* ROUTES - Now straight lines */}
                 {Object.entries(activeRoutes).map(([incId, route]) => {
                     return <Polyline key={incId} positions={route} pathOptions={{ color: '#22c55e', dashArray: '5, 10', weight: 2 }} />;
