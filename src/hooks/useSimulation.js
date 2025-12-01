@@ -157,10 +157,34 @@ export const useSimulation = (demoMode = true) => {
                     break;
 
                 case 'dispatching':
-                    // Auto-dispatch logic handled by UI or manual trigger, but for full auto demo:
-                    // We'll wait for user or auto-trigger. 
-                    // Let's just move to resolved after a timeout if no action, or wait for resolution.
-                    // For now, we'll let the UI handle the dispatch trigger based on this state.
+                    timer = setTimeout(() => {
+                        // Auto-dispatch if no manual action taken
+                        const incident = incidents.find(i => i.status !== 'assigned');
+                        if (incident) {
+                            // Simple fit score logic (duplicated from App.jsx for now, or move to helper)
+                            // We just need ANY available officer for the demo
+                            const availableOfficers = officers.filter(o => o.status !== 'busy');
+                            if (availableOfficers.length > 0) {
+                                // Find closest
+                                const best = availableOfficers.sort((a, b) => {
+                                    const distA = Math.sqrt((a.lat - incident.lat) ** 2 + (a.lng - incident.lng) ** 2);
+                                    const distB = Math.sqrt((b.lat - incident.lat) ** 2 + (b.lng - incident.lng) ** 2);
+                                    return distA - distB;
+                                })[0];
+
+                                addLog(`Auto-Authorizing Dispatch for Officer ${best.name}...`, 'text-green-300');
+                                dispatchOfficer(best.id, incident.id);
+                                // Note: dispatchOfficer doesn't advance stage, we do it here or rely on timeout?
+                                // Actually, let's just advance stage here to keep loop moving
+                                setDemoStage('resolved');
+                            } else {
+                                addLog("No units available. Queuing...", 'text-orange-300');
+                                setDemoStage('resolved'); // Skip to next
+                            }
+                        } else {
+                            setDemoStage('resolved');
+                        }
+                    }, 2000);
                     break;
 
                 case 'resolved':
@@ -168,13 +192,13 @@ export const useSimulation = (demoMode = true) => {
                         setScenarioIndex(prev => prev + 1);
                         setIncidents([]);
                         setDemoStage('scanning');
-                    }, 5000);
+                    }, 8000); // Wait a bit before clearing and restarting
                     break;
             }
         };
         advanceStage();
         return () => clearTimeout(timer);
-    }, [demoMode, demoStage, scenarioIndex, addLog]);
+    }, [demoMode, demoStage, scenarioIndex, addLog, incidents, officers, dispatchOfficer]);
 
     return {
         officers,
