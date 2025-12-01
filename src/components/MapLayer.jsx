@@ -34,10 +34,9 @@ const MapLayer = ({ officers, incidents, activeRoutes, heatmapMode, patrolCarMod
                     />
                 ))}
 
-                {/* ROUTES */}
-                {Object.entries(activeRoutes).map(([incId, pathIds]) => {
-                    const positions = pathIds.map(id => [ROAD_NODES[id].lat, ROAD_NODES[id].lng]);
-                    return <Polyline key={incId} positions={positions} pathOptions={{ color: '#22c55e', dashArray: '5, 10', weight: 2 }} />;
+                {/* ROUTES - Now straight lines */}
+                {Object.entries(activeRoutes).map(([incId, route]) => {
+                    return <Polyline key={incId} positions={route} pathOptions={{ color: '#22c55e', dashArray: '5, 10', weight: 2 }} />;
                 })}
 
                 {/* OFFICERS */}
