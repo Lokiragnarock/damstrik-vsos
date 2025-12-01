@@ -264,7 +264,22 @@ export default function App() {
 
     const addLog = useCallback((msg, color = 'text-slate-300') => {
         const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        setLogs(prev => [...prev.slice(-20), { time, msg, color }]); // Keep last 20 logs
+        setLogs(prev => [...prev.slice(-20), { time, msg, color }]);
+    }, []);
+
+    // --- LOGIC: REPOSITION OTHERS (COVERAGE ALGO) ---
+    const repositionOthers = useCallback((dispatchedOfficerId, targetX, targetY) => {
+        setOfficers(prev => prev.map(o => {
+            if (o.id === dispatchedOfficerId || o.status === 'busy') return o;
+
+            // Simple swarm logic: If an officer is far from the target, nudge them slightly towards it to fill the gap
+            // But keep them dispersed. 
+            const dist = Math.sqrt(Math.pow(targetX - o.x, 2) + Math.pow(targetY - o.y, 2));
+            if (dist > 40) { // If very far, move closer
+                return { ...o, x: o.x + (targetX - o.x) * 0.1, y: o.y + (targetY - o.y) * 0.1 };
+            }
+            return o;
+        }));
     }, []);
 
     // --- LOGIC: HANDLE DISPATCH ---
@@ -273,40 +288,56 @@ export default function App() {
         addLog(`Command confirmed. Syncing directives to unit device...`, 'text-yellow-400');
 
         setTimeout(() => {
-            // Find officer and incident to animate movement
             const officer = officers.find(o => o.id === officerId);
-            const incident = incidents.find(i => i.status !== 'assigned'); // Assuming single active incident for now or passing it
+            const incident = incidents.find(i => i.status !== 'assigned');
 
-            // Update Officer Status to Busy
+            if (!officer || !incident) {
+                setDispatching(false);
+                return;
+            }
+
+            // 1. Trigger Repositioning of other units to cover the gap
+            repositionOthers(officerId, officer.x, officer.y);
+
+            // 2. Update Status
             setOfficers(prev => prev.map(o => o.id === officerId ? { ...o, status: 'busy' } : o));
-            // Update Incident Status to Assigned
             setIncidents(prev => prev.map(i => i.status !== 'assigned' ? { ...i, status: 'assigned', assignedTo: officerId } : i));
 
-            // Start movement animation if we found both
-            if (officer && incident) {
-                setMovingOfficerId(officerId);
-                // Animate movement over 2 seconds
-                const steps = 60;
-                const dx = (incident.x - officer.x) / steps;
-                const dy = (incident.y - officer.y) / steps;
-                let step = 0;
+            // 3. Animate Movement
+            setMovingOfficerId(officerId);
+            const steps = 300; // Slower animation (approx 5s)
+            const dx = (incident.x - officer.x) / steps;
+            const dy = (incident.y - officer.y) / steps;
+            let step = 0;
 
-                const moveInterval = setInterval(() => {
-                    step++;
-                    setOfficers(prev => prev.map(o => {
-                        if (o.id === officerId) {
-                            return { ...o, x: o.x + dx, y: o.y + dy };
-                        }
-                        return o;
-                    }));
-
-                    if (step >= steps) {
-                        clearInterval(moveInterval);
-                        setMovingOfficerId(null);
-                        addLog(`Unit ${officer.name} arrived at location.`, 'text-green-400');
+            const moveInterval = setInterval(() => {
+                step++;
+                setOfficers(prev => prev.map(o => {
+                    if (o.id === officerId) {
+                        return { ...o, x: o.x + dx, y: o.y + dy };
                     }
-                }, 16); // ~60fps
-            }
+                    return o;
+                }));
+
+                if (step >= steps) {
+                    clearInterval(moveInterval);
+                    setMovingOfficerId(null);
+                    addLog(`Unit ${officer.name} arrived at location.`, 'text-green-400');
+
+                    // 4. STAY IN SPOT & RESOLVE
+                    // Do NOT reset position. Just update status after a delay.
+                    setTimeout(() => {
+                        setOfficers(prev => prev.map(o => {
+                            if (o.id === officerId) {
+                                // Ensure they are exactly at the target now
+                                return { ...o, status: 'patrol', x: incident.x, y: incident.y };
+                            }
+                            return o;
+                        }));
+                        addLog(`Unit ${officer.name} resolved incident. Holding position for patrol.`, 'text-slate-400');
+                    }, 15000); // 15s resolution time
+                }
+            }, 16);
 
             setDispatching(false);
             setShowDispatchModal(false);
@@ -314,7 +345,7 @@ export default function App() {
             setAiAdvice(null);
             addLog(`Unit dispatched successfully. Route uploaded.`, 'text-green-400');
         }, 1500);
-    }, [addLog, officers, incidents]);
+    }, [addLog, officers, incidents, repositionOthers]);
 
     // --- LOGIC: TRIGGER AI ADVICE ---
     const triggerAiAnalysis = useCallback(async (incident, topOfficer) => {
@@ -351,10 +382,10 @@ export default function App() {
         const advanceStage = () => {
             switch (demoStage) {
                 case 'scanning':
+                    // Slow down new events (12s)
                     timer = setTimeout(() => {
                         setDemoStage('detected');
 
-                        // LOGIC FOR DETECTION
                         const currentScenario = scenarioIndex % 3;
                         let newIncident = {};
                         if (currentScenario === 0) {
@@ -372,17 +403,16 @@ export default function App() {
                             newIncident = { id: `inc-${Date.now()}`, type: 'assault', location: 'Madiwala Market', time: 'Live Feed', status: 'pending', priority: 'critical', x: 80, y: 80, desc: 'Officer Arun Gowda requesting immediate backup. Active altercation in progress.' };
                         }
                         setIncidents([newIncident]);
-                    }, 4000);
+                    }, 12000);
                     break;
 
                 case 'detected':
                     timer = setTimeout(() => {
                         setDemoStage('analyzing');
-                    }, 3000);
+                    }, 4000);
                     break;
 
                 case 'analyzing':
-                    // Trigger UI for analysis
                     const incident = incidents[0];
                     if (incident) {
                         setSelectedIncident(incident);
@@ -400,11 +430,10 @@ export default function App() {
                     }
                     timer = setTimeout(() => {
                         setDemoStage('dispatching');
-                    }, 6000);
+                    }, 8000); // Allow time to read analysis
                     break;
 
                 case 'dispatching':
-                    // Trigger dispatch
                     const bestOfficer = officers
                         .filter(o => o.status !== 'busy')
                         .map(o => ({ ...o, ...calculateFitScore(o, incidents[0]) }))
@@ -412,23 +441,23 @@ export default function App() {
 
                     if (bestOfficer) {
                         addLog(`Auto-Authorizing Dispatch for Officer ${bestOfficer?.name}...`, 'text-green-300');
-                        handleDispatch(bestOfficer.id); // This handles animation & state update
+                        handleDispatch(bestOfficer.id);
                     }
                     timer = setTimeout(() => {
                         setDemoStage('resolved');
-                    }, 2000); // Wait for dispatch func to initiate
+                    }, 2000);
                     break;
 
                 case 'resolved':
+                    // Wait for resolution (linked to handleDispatch timeout)
                     timer = setTimeout(() => {
-                        // RESET FOR NEXT LOOP
                         setScenarioIndex(prev => prev + 1);
                         setIncidents([]);
-                        setOfficers(INITIAL_OFFICERS); // Reset positions
+                        // DO NOT RESET OFFICERS
                         setShowDispatchModal(false);
                         setAiAdvice(null);
                         setDemoStage('scanning');
-                    }, 8000); // Wait for animation to finish
+                    }, 20000);
                     break;
             }
         };
