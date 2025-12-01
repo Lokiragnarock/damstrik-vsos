@@ -711,7 +711,7 @@ export default function App() {
                 <div className="col-span-6 relative bg-slate-950 overflow-hidden group flex flex-col">
                     <div className="flex-1 relative">
                         {/* REAL MAP BACKGROUND */}
-                        <div className="absolute inset-0 z-0 opacity-40 grayscale invert contrast-125 brightness-75 pointer-events-none">
+                        <div className="absolute inset-0 z-0 opacity-40 grayscale invert contrast-125 brightness-75">
                             <iframe
                                 width="100%"
                                 height="100%"
@@ -749,7 +749,7 @@ export default function App() {
                         ))}
 
                         {/* Map Objects */}
-                        <div className="absolute inset-0 z-20">
+                        <div className="absolute inset-0 z-20 pointer-events-none">
                             {heatmapMode && ZONES.map(zone => (
                                 <div
                                     key={zone.id}
@@ -768,13 +768,13 @@ export default function App() {
                             {patrolCarMode && officers.map(officer => (
                                 <div
                                     key={officer.id}
-                                    className="absolute transition-all duration-100 ease-linear group/marker"
+                                    className="absolute transition-all duration-100 ease-linear group/marker pointer-events-auto"
                                     style={{ left: `${officer.x}%`, top: `${officer.y}%` }}
                                     onClick={() => handleOfficerClick(officer)}
                                 >
                                     <div className="relative -translate-x-1/2 -translate-y-1/2 cursor-pointer">
                                         <div className={`w-8 h-8 rounded-full border-2 ${officer.status === 'busy' ? 'bg-blue-600 border-white shadow-[0_0_15px_rgba(37,99,235,0.8)]' : 'bg-slate-900 border-blue-500 shadow-[0_0_10px_rgba(0,0,0,0.5)]'} flex items-center justify-center z-20 relative transition-all`}>
-                                            <Navigation className={`w-4 h-4 text-white transform ${officer.status === 'busy' ? 'rotate-0 animate-bounce' : 'rotate-45'}`} />
+                                            <Navigation className={`w-4 h-4 text-white transform ${officer.status === 'busy' ? 'rotate-0 animate-pulse' : 'rotate-45'}`} />
                                         </div>
                                         <div className="absolute top-10 left-1/2 -translate-x-1/2 bg-slate-900/90 border border-slate-700 px-2 py-1 rounded text-[9px] font-bold whitespace-nowrap text-white opacity-0 group-hover/marker:opacity-100 transition-opacity pointer-events-none z-30 shadow-lg">
                                             {officer.name}
