@@ -751,6 +751,33 @@ export default function App() {
                                     }}
                                 />
                             ))}
+
+                            {/* INCIDENTS */}
+                            {incidents.map(inc => (
+                                <Marker
+                                    key={inc.id}
+                                    position={[inc.lat, inc.lng]}
+                                    icon={L.divIcon({
+                                        className: 'custom-leaflet-icon',
+                                        html: `<div class="relative w-10 h-10 flex items-center justify-center group/incident">
+                                                 <div class="absolute inset-[-10px] bg-red-500/30 rounded-full animate-pulse"></div>
+                                                 <div class="w-10 h-10 rounded-full border-2 ${inc.status === 'assigned' ? 'bg-green-600 border-white' : 'bg-red-600 border-white animate-bounce'} flex items-center justify-center shadow-[0_0_25px_rgba(239,68,68,0.8)]">
+                                                    ${inc.status === 'assigned' ? '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>' : '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>'}
+                                                 </div>
+                                               </div>`,
+                                        iconSize: [40, 40],
+                                        iconAnchor: [20, 20]
+                                    })}
+                                    eventHandlers={{
+                                        click: () => {
+                                            if (inc.status !== 'assigned') {
+                                                setSelectedIncident(inc);
+                                                setShowDispatchModal(true);
+                                            }
+                                        }
+                                    }}
+                                />
+                            ))}
                         </MapContainer>
 
                         <div className="absolute inset-0 z-10 bg-blue-900/5 pointer-events-none"></div>
