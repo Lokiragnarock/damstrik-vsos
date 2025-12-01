@@ -56,6 +56,105 @@ const callGeminiStrategy = async (incident, officer) => {
     }
 };
 
+// --- ROAD NETWORK GRAPH (Bangalore - Koramangala/Madiwala Layout) ---
+// Nodes represent major intersections. Edges represent roads.
+const ROAD_NODES = {
+    'SonySignal': { x: 70, y: 20, id: 'SonySignal' },
+    'ChristUniv': { x: 48, y: 62, id: 'ChristUniv' },
+    'MadiwalaMkt': { x: 80, y: 80, id: 'MadiwalaMkt' },
+    'Koramangala5th': { x: 25, y: 35, id: 'Koramangala5th' },
+    'ForumMall': { x: 10, y: 10, id: 'ForumMall' },
+    'StJohns': { x: 60, y: 50, id: 'StJohns' }, // Central Hub
+    'DairyCircle': { x: 10, y: 60, id: 'DairyCircle' },
+    'BTMJunction': { x: 50, y: 90, id: 'BTMJunction' },
+    'Indiranagar100ft': { x: 90, y: 10, id: 'Indiranagar100ft' }
+};
+
+const ROAD_EDGES = [
+    ['SonySignal', 'StJohns'],
+    ['SonySignal', 'Indiranagar100ft'],
+    ['ChristUniv', 'StJohns'],
+    ['ChristUniv', 'DairyCircle'],
+    ['ChristUniv', 'BTMJunction'],
+    ['MadiwalaMkt', 'StJohns'],
+    ['MadiwalaMkt', 'BTMJunction'],
+    ['Koramangala5th', 'StJohns'],
+    ['Koramangala5th', 'ForumMall'],
+    ['DairyCircle', 'ForumMall'],
+    ['StJohns', 'Indiranagar100ft'] // Ring Road connection
+];
+
+// Build Adjacency List
+const ADJ_LIST = {};
+Object.keys(ROAD_NODES).forEach(id => ADJ_LIST[id] = []);
+ROAD_EDGES.forEach(([a, b]) => {
+    ADJ_LIST[a].push(b);
+    ADJ_LIST[b].push(a);
+});
+
+// Helper: Find nearest road node to any point
+const getNearestNode = (x, y) => {
+    let min = Infinity;
+    let nearest = null;
+    Object.values(ROAD_NODES).forEach(node => {
+        const d = Math.sqrt((node.x - x) ** 2 + (node.y - y) ** 2);
+        if (d < min) {
+            min = d;
+            nearest = node;
+        }
+    });
+    return nearest;
+};
+
+const calculateDistance = (x1, y1, x2, y2) => Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
+
+// A* Pathfinding
+const findPath = (startNodeId, endNodeId) => {
+    const openSet = [startNodeId];
+    const cameFrom = {};
+    const gScore = {};
+    const fScore = {};
+
+    Object.keys(ROAD_NODES).forEach(id => {
+        gScore[id] = Infinity;
+        fScore[id] = Infinity;
+    });
+
+    gScore[startNodeId] = 0;
+    fScore[startNodeId] = calculateDistance(ROAD_NODES[startNodeId].x, ROAD_NODES[startNodeId].y, ROAD_NODES[endNodeId].x, ROAD_NODES[endNodeId].y);
+
+    while (openSet.length > 0) {
+        // Get node with lowest fScore
+        let current = openSet.reduce((a, b) => fScore[a] < fScore[b] ? a : b);
+
+        if (current === endNodeId) {
+            // Reconstruct path
+            const path = [current];
+            while (current in cameFrom) {
+                current = cameFrom[current];
+                path.unshift(current);
+            }
+            return path;
+        }
+
+        openSet.splice(openSet.indexOf(current), 1);
+
+        for (let neighbor of ADJ_LIST[current]) {
+            const tentativeGScore = gScore[current] + calculateDistance(ROAD_NODES[current].x, ROAD_NODES[current].y, ROAD_NODES[neighbor].x, ROAD_NODES[neighbor].y);
+
+            if (tentativeGScore < gScore[neighbor]) {
+                cameFrom[neighbor] = current;
+                gScore[neighbor] = tentativeGScore;
+                fScore[neighbor] = gScore[neighbor] + calculateDistance(ROAD_NODES[neighbor].x, ROAD_NODES[neighbor].y, ROAD_NODES[endNodeId].x, ROAD_NODES[endNodeId].y);
+                if (!openSet.includes(neighbor)) {
+                    openSet.push(neighbor);
+                }
+            }
+        }
+    }
+    return [startNodeId, endNodeId]; // Fallback direct line if no path
+};
+
 // --- MOCK BACKEND DATA ---
 
 const ZONES = [
@@ -70,40 +169,40 @@ const INITIAL_OFFICERS = [
         id: 'o1',
         name: 'ASI Rajesh Kumar',
         badge: 'KA-05-221',
-        skill: ['Theft', 'Burglary'],
-        fatigue: 15,
+        skill: ['Public Order', 'Mediation'],
+        fatigue: 12,
         status: 'patrol',
-        x: 25, y: 35,
-        lat: 12.936, lng: 77.615,
-        vehicle: 'Cheetah',
-        history: '15 Years Service • 94% Clearance Rate',
-        specialization_desc: 'Expert in property crimes and urban pursuit tactics.'
+        x: 20, y: 30,
+        lat: 12.935, lng: 77.622,
+        vehicle: 'Hoysala',
+        history: '15 Years Service • 92% Clearance Rate',
+        specialization_desc: 'Expert in community mediation and de-escalation.'
     },
     {
         id: 'o2',
-        name: 'PC Priya Sharma',
-        badge: 'KA-05-889',
-        skill: ['Women Safety', 'Mediation'],
+        name: 'HC Suresh Menon',
+        badge: 'KA-05-882',
+        skill: ['Theft', 'Surveillance'],
         fatigue: 45,
         status: 'patrol',
-        x: 50, y: 55,
-        lat: 12.939, lng: 77.605,
-        vehicle: 'Hoysala',
-        history: '8 Years Service • 88% Clearance Rate',
-        specialization_desc: 'Certified crisis negotiator and women safety specialist.'
+        x: 75, y: 15,
+        lat: 12.948, lng: 77.628,
+        vehicle: 'Cheetah',
+        history: '8 Years Service • 78% Clearance Rate',
+        specialization_desc: 'Specialized in urban surveillance and theft tracking.'
     },
     {
         id: 'o3',
-        name: 'HC Vikram Singh',
-        badge: 'KA-01-112',
-        skill: ['Cyber', 'Fraud'],
-        fatigue: 10,
-        status: 'station',
-        x: 10, y: 10,
-        lat: 12.930, lng: 77.610,
-        vehicle: 'Desk',
-        history: '12 Years Service • 91% Clearance Rate',
-        specialization_desc: 'Digital forensics expert. Handles financial fraud cases.'
+        name: 'WPC Lakshmi N',
+        badge: 'KA-05-441',
+        skill: ['Women Safety', 'Counseling'],
+        fatigue: 5,
+        status: 'patrol',
+        x: 45, y: 55,
+        lat: 12.936, lng: 77.605,
+        vehicle: 'Pink Hoysala',
+        history: '4 Years Service • 98% Clearance Rate',
+        specialization_desc: 'Dedicated to women safety and victim counseling.'
     },
     {
         id: 'o4',
@@ -138,40 +237,25 @@ const CRIME_TYPES = {
     assault: { label: 'Violent Assault', color: 'text-red-500', bg: 'bg-red-500/20', border: 'border-red-500', mapColor: '#ef4444' },
     cyber: { label: 'Cyber Fraud', color: 'text-orange-400', bg: 'bg-orange-500/20', border: 'border-orange-500', mapColor: '#f97316' },
     women_safety: { label: 'Women Safety', color: 'text-pink-400', bg: 'bg-pink-500/20', border: 'border-pink-500', mapColor: '#ec4899' },
-    public_order: { label: 'Public Nuisance', color: 'text-blue-400', bg: 'bg-blue-500/20', border: 'border-blue-500', mapColor: '#3b82f6' },
-    murder: { label: 'Homicide', color: 'text-green-500', bg: 'bg-green-500/20', border: 'border-green-500', mapColor: '#22c55e' },
-    traffic: { label: 'Traffic Congestion', color: 'text-yellow-400', bg: 'bg-yellow-500/20', border: 'border-yellow-500', mapColor: '#eab308' },
-    predictive: { label: 'AI Forecast', color: 'text-cyan-400', bg: 'bg-cyan-500/20', border: 'border-cyan-500', mapColor: '#22d3ee' },
+    public_order: { label: 'Public Disturbance', color: 'text-yellow-400', bg: 'bg-yellow-500/20', border: 'border-yellow-500', mapColor: '#eab308' },
+    traffic: { label: 'Traffic Gridlock', color: 'text-blue-400', bg: 'bg-blue-500/20', border: 'border-blue-500', mapColor: '#3b82f6' },
+    predictive: { label: 'AI Prediction', color: 'text-cyan-400', bg: 'bg-cyan-500/20', border: 'border-cyan-500', mapColor: '#06b6d4' },
+    murder: { label: 'Homicide', color: 'text-rose-600', bg: 'bg-rose-600/20', border: 'border-rose-600', mapColor: '#e11d48' }
 };
 
 // --- LOGIC HELPERS ---
 
-const calculateDistance = (x1, y1, x2, y2) => Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
-
 const calculateFitScore = (officer, incident) => {
     const dist = calculateDistance(officer.x, officer.y, incident.x, incident.y);
+
+    // STRICT REQUIREMENT: Proximity ONLY for initial dispatch.
+    // "No use of skill if its rampant and running unchecked"
     const proximityScore = Math.max(0, 100 - dist * 1.5);
 
-    const requiredSkills = {
-        'theft': ['Theft', 'Burglary', 'Public Order'],
-        'assault': ['Public Order', 'Crowd Control'],
-        'cyber': ['Cyber', 'Fraud'],
-        'women_safety': ['Women Safety', 'Mediation'],
-        'public_order': ['Public Order'],
-        'murder': ['Investigation', 'Forensics'],
-        'traffic': ['Public Order', 'Crowd Control'],
-        'predictive': ['Patrol', 'Public Order', 'Theft'] // Generic patrol skills
-    };
-
-    const hasSkill = requiredSkills[incident.type]?.some(r => officer.skill.includes(r));
-    const skillScore = hasSkill ? 100 : 20;
-    const fatigueScore = 100 - officer.fatigue;
-    const totalScore = (proximityScore * 0.4) + (skillScore * 0.4) + (fatigueScore * 0.2);
-
     return {
-        score: Math.round(totalScore),
-        breakdown: { proximity: Math.round(proximityScore), skill: skillScore, fatigue: fatigueScore },
-        distance: Math.round(dist * 10) // Mock meters
+        score: Math.round(proximityScore), // Pure proximity score
+        breakdown: { proximity: Math.round(proximityScore), skill: 0, fatigue: 0 },
+        distance: Math.round(dist * 10)
     };
 };
 
@@ -183,28 +267,27 @@ const RadarScanner = () => (
     </div>
 );
 
-const RouteLine = ({ start, end }) => {
-    if (!start || !end) return null;
-    const x1 = `${start.x}%`;
-    const y1 = `${start.y}%`;
-    const x2 = `${end.x}%`;
-    const y2 = `${end.y}%`;
+const RouteLine = ({ path }) => {
+    if (!path || path.length < 2) return null;
 
+    // Convert path of Node IDs to SVG points
+    const points = path.map(id => {
+        const node = ROAD_NODES[id];
+        return `${node.x},${node.y}`; // SVG uses comma
+    }).join(' ');
+
+    // We need to scale these % coordinates to the SVG viewbox (0-100)
     return (
-        <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
-            <defs>
-                <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-                    <polygon points="0 0, 10 3.5, 0 7" fill="#22c55e" />
-                </marker>
-            </defs>
-            <line
-                x1={x1} y1={y1} x2={x2} y2={y2}
+        <svg className="absolute inset-0 w-full h-full pointer-events-none z-10" viewBox="0 0 100 100" preserveAspectRatio="none">
+            <polyline
+                points={points}
+                fill="none"
                 stroke="#22c55e"
-                strokeWidth="2"
-                strokeDasharray="5,5"
-                markerEnd="url(#arrowhead)"
+                strokeWidth="0.5"
+                strokeDasharray="1,1"
                 className="animate-pulse opacity-80"
             />
+            <circle cx={ROAD_NODES[path[path.length - 1]].x} cy={ROAD_NODES[path[path.length - 1]].y} r="1" fill="#22c55e" className="animate-ping" />
         </svg>
     );
 };
@@ -249,6 +332,7 @@ export default function App() {
     const [patrolCarMode, setPatrolCarMode] = useState(true);
     const [currentTime, setCurrentTime] = useState(new Date());
     const [movingOfficerId, setMovingOfficerId] = useState(null);
+    const [activeRoutes, setActiveRoutes] = useState({}); // { incidentId: [nodeId, nodeId...] }
 
     // AI State
     const [aiAdvice, setAiAdvice] = useState(null);
@@ -272,11 +356,11 @@ export default function App() {
         setOfficers(prev => prev.map(o => {
             if (o.id === dispatchedOfficerId || o.status === 'busy') return o;
 
-            // Simple swarm logic: If an officer is far from the target, nudge them slightly towards it to fill the gap
-            // But keep them dispersed. 
-            const dist = Math.sqrt(Math.pow(targetX - o.x, 2) + Math.pow(targetY - o.y, 2));
-            if (dist > 40) { // If very far, move closer
-                return { ...o, x: o.x + (targetX - o.x) * 0.1, y: o.y + (targetY - o.y) * 0.1 };
+            // Move towards nearest road node to stay "on grid"
+            const nearestNode = getNearestNode(o.x, o.y);
+            if (nearestNode) {
+                // Slowly drift to nearest intersection if idle
+                return { ...o, x: o.x + (nearestNode.x - o.x) * 0.05, y: o.y + (nearestNode.y - o.y) * 0.05 };
             }
             return o;
         }));
@@ -296,54 +380,82 @@ export default function App() {
                 return;
             }
 
-            // 1. Trigger Repositioning of other units to cover the gap
+            // 1. Calculate Path on Road Network
+            const startNode = getNearestNode(officer.x, officer.y);
+            const endNode = getNearestNode(incident.x, incident.y);
+            const pathIds = findPath(startNode.id, endNode.id);
+
+            // Store route for visualization
+            setActiveRoutes(prev => ({ ...prev, [incident.id]: pathIds }));
+
+            // 2. Trigger Repositioning
             repositionOthers(officerId, officer.x, officer.y);
 
-            // 2. Update Status
+            // 3. Update Status
             setOfficers(prev => prev.map(o => o.id === officerId ? { ...o, status: 'busy' } : o));
             setIncidents(prev => prev.map(i => i.status !== 'assigned' ? { ...i, status: 'assigned', assignedTo: officerId } : i));
 
-            // 3. Animate Movement
+            // 4. Animate Movement along Path
             setMovingOfficerId(officerId);
-            const steps = 300; // Slower animation (approx 5s)
-            const dx = (incident.x - officer.x) / steps;
-            const dy = (incident.y - officer.y) / steps;
-            let step = 0;
 
-            const moveInterval = setInterval(() => {
-                step++;
-                setOfficers(prev => prev.map(o => {
-                    if (o.id === officerId) {
-                        return { ...o, x: o.x + dx, y: o.y + dy };
-                    }
-                    return o;
-                }));
-
-                if (step >= steps) {
-                    clearInterval(moveInterval);
+            let currentPathIndex = 0;
+            const moveAlongPath = () => {
+                if (currentPathIndex >= pathIds.length) {
+                    // Arrived
                     setMovingOfficerId(null);
                     addLog(`Unit ${officer.name} arrived at location.`, 'text-green-400');
 
-                    // 4. STAY IN SPOT & RESOLVE
-                    // Do NOT reset position. Just update status after a delay.
+                    // Stay in spot logic
                     setTimeout(() => {
                         setOfficers(prev => prev.map(o => {
                             if (o.id === officerId) {
-                                // Ensure they are exactly at the target now
                                 return { ...o, status: 'patrol', x: incident.x, y: incident.y };
                             }
                             return o;
                         }));
-                        addLog(`Unit ${officer.name} resolved incident. Holding position for patrol.`, 'text-slate-400');
-                    }, 15000); // 15s resolution time
+                        setActiveRoutes(prev => {
+                            const newRoutes = { ...prev };
+                            delete newRoutes[incident.id];
+                            return newRoutes;
+                        });
+                        addLog(`Unit ${officer.name} resolved incident. Holding position.`, 'text-slate-400');
+                    }, 15000);
+                    return;
                 }
-            }, 16);
+
+                const targetNodeId = pathIds[currentPathIndex];
+                const targetNode = ROAD_NODES[targetNodeId];
+
+                // Animate to this node
+                const steps = 60; // 1 second per segment
+                let step = 0;
+
+                const segmentInterval = setInterval(() => {
+                    step++;
+                    setOfficers(prev => prev.map(o => {
+                        if (o.id === officerId) {
+                            const dx = (targetNode.x - o.x) / (steps - step + 1); // Simple easing
+                            const dy = (targetNode.y - o.y) / (steps - step + 1);
+                            return { ...o, x: o.x + dx, y: o.y + dy };
+                        }
+                        return o;
+                    }));
+
+                    if (step >= steps) {
+                        clearInterval(segmentInterval);
+                        currentPathIndex++;
+                        moveAlongPath(); // Next segment
+                    }
+                }, 16);
+            };
+
+            moveAlongPath();
 
             setDispatching(false);
             setShowDispatchModal(false);
             setSelectedIncident(null);
             setAiAdvice(null);
-            addLog(`Unit dispatched successfully. Route uploaded.`, 'text-green-400');
+            addLog(`Unit dispatched. Route: ${pathIds.join(' -> ')}`, 'text-green-400');
         }, 1500);
     }, [addLog, officers, incidents, repositionOthers]);
 
@@ -599,11 +711,9 @@ export default function App() {
                         </div>
 
                         {/* Active Routes */}
-                        {incidents.filter(i => i.status === 'assigned').map(inc => {
-                            // Officer position is now dynamic
-                            const officer = officers.find(o => o.id === inc.assignedTo);
-                            return <RouteLine key={`route-${inc.id}`} start={officer} end={inc} />;
-                        })}
+                        {Object.entries(activeRoutes).map(([incId, path]) => (
+                            <RouteLine key={`route-${incId}`} path={path} />
+                        ))}
 
                         {/* Map Objects */}
                         <div className="absolute inset-0 z-20">
