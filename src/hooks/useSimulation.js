@@ -91,7 +91,21 @@ export const useSimulation = (demoMode = true) => {
                 }
 
                 const targetPoint = segmentPoints[segmentIndex];
-                const steps = 30; // Faster movement (0.5s per segment)
+
+                // Calculate distance for this segment (in degrees)
+                // 1 degree ≈ 111 km, so we convert to km
+                const currentOfficer = officers.find(o => o.id === officerId);
+                const distKm = Math.sqrt(
+                    Math.pow((targetPoint.lat - currentOfficer.lat) * 111, 2) +
+                    Math.pow((targetPoint.lng - currentOfficer.lng) * 111, 2)
+                );
+
+                // Speed: 20 km/h = 0.00556 km/s
+                // Duration = distance / speed (in seconds)
+                const durationSeconds = distKm / 0.00556;
+
+                // Frame interval: 60fps = 16.67ms per frame
+                const steps = Math.max(30, Math.floor(durationSeconds * 60)); // At least 30 frames (0.5s minimum)
                 let step = 0;
 
                 const interval = setInterval(() => {
