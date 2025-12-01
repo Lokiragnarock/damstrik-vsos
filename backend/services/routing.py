@@ -47,10 +47,32 @@ EDGES = [
     ("JyotiNivas", "ForumMall")
 ]
 
+# Waypoints for curved roads (approximate)
+# Format: (NodeA, NodeB): [(lat, lng), (lat, lng), ...]
+# These points are visited IN ORDER when moving from NodeA to NodeB.
+# If moving from NodeB to NodeA, the list is reversed.
+WAYPOINTS = {
+    ("SonySignal", "StJohns"): [
+        (12.9400, 77.6240), # 80ft road bend
+        (12.9350, 77.6230)  # Near Koramangala Police Station
+    ],
+    ("SonySignal", "Indiranagar100ft"): [
+        (12.9500, 77.6300), # Domlur Flyover start
+        (12.9550, 77.6350)  # Domlur Flyover end
+    ],
+    ("StJohns", "CheckPost"): [
+        (12.9280, 77.6220)  # Madiwala Underpass
+    ],
+    ("MadiwalaMkt", "StJohns"): [
+        (12.9250, 77.6190)  # Total Mall
+    ]
+}
+
 class RoadNetwork:
     def __init__(self):
         self.nodes = NODES
         self.adj_list = self._build_adj_list()
+        self.waypoints = WAYPOINTS
 
     def _build_adj_list(self) -> Dict[str, List[str]]:
         adj = {node: [] for node in self.nodes}
@@ -59,6 +81,15 @@ class RoadNetwork:
                 adj[u].append(v)
                 adj[v].append(u)
         return adj
+
+    def get_edge_waypoints(self, u: str, v: str) -> List[Tuple[float, float]]:
+        """Get list of intermediate waypoints between u and v."""
+        if (u, v) in self.waypoints:
+            return self.waypoints[(u, v)]
+        elif (v, u) in self.waypoints:
+            return self.waypoints[(v, u)][::-1] # Reverse for other direction
+        return []
+
 
     def get_nearest_node(self, location: Location) -> str:
         """Find the nearest graph node to a given coordinate."""

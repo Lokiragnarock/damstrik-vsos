@@ -101,35 +101,58 @@ class Simulator:
 
             # Move along path
             if asset.current_path:
-                next_node = asset.current_path[0]
-                target_coords = self.road_network.nodes[next_node]
-                current_coords = (asset.location.lat, asset.location.lng)
-                
-                # Constant speed movement (degrees per step)
-                # Approx 0.0001 deg is ~11 meters. 
-                # Speed of 0.0002 per tick (1 sec) is ~22 m/s or ~80 km/h (fast police car)
-                speed = 0.0002 
-                
-                # Calculate direction vector
-                dx = target_coords[0] - current_coords[0]
-                dy = target_coords[1] - current_coords[1]
-                distance = math.sqrt(dx**2 + dy**2)
-                
-                if distance > 0:
-                    # Normalize and scale by speed
-                    move_x = (dx / distance) * speed
-                    move_y = (dy / distance) * speed
+                # Check if we have waypoints to traverse first
+                if not asset.current_segment_waypoints:
+                    # We are at a node, looking at the next node in path
+                    next_node = asset.current_path[0]
+                    # Load waypoints between current_node and next_node
+                    waypoints = self.road_network.get_edge_waypoints(asset.current_node, next_node)
+                    if waypoints:
+                        # Convert tuples to Location objects or just use tuples
+                        # Let's use simple dicts or objects for consistency, but tuples are fine for internal logic
+                        # We need to append the final destination (next_node) to the waypoints list
+                        # so we visit waypoints -> next_node
+                        asset.current_segment_waypoints = [Location(lat=wp[0], lng=wp[1]) for wp in waypoints]
                     
-                    # Check if we overshoot
-                    if distance <= speed:
-                        # Reached the node
-                        asset.location.lat = target_coords[0]
-                        asset.location.lng = target_coords[1]
-                        asset.current_node = next_node
-                        asset.current_path.pop(0) # Remove reached node
-                    else:
-                        asset.location.lat += move_x
-                        asset.location.lng += move_y
+                    # Always append the actual node as the final "waypoint" of this segment
+                    node_coords = self.road_network.nodes[next_node]
+                    if not asset.current_segment_waypoints:
+                         asset.current_segment_waypoints = []
+                    asset.current_segment_waypoints.append(Location(lat=node_coords[0], lng=node_coords[1]))
+
+                # Now move towards the first target in current_segment_waypoints
+                if asset.current_segment_waypoints:
+                    target = asset.current_segment_waypoints[0]
+                    target_coords = (target.lat, target.lng)
+                    current_coords = (asset.location.lat, asset.location.lng)
+                    
+                    # Constant speed movement (degrees per step)
+                    speed = 0.0002 
+                    
+                    # Calculate direction vector
+                    dx = target_coords[0] - current_coords[0]
+                    dy = target_coords[1] - current_coords[1]
+                    distance = math.sqrt(dx**2 + dy**2)
+                    
+                    if distance > 0:
+                        # Normalize and scale by speed
+                        move_x = (dx / distance) * speed
+                        move_y = (dy / distance) * speed
+                        
+                        # Check if we overshoot
+                        if distance <= speed:
+                            # Reached the waypoint/node
+                            asset.location.lat = target_coords[0]
+                            asset.location.lng = target_coords[1]
+                            asset.current_segment_waypoints.pop(0)
+                            
+                            # If we emptied the waypoints, it means we reached the next_node
+                            if not asset.current_segment_waypoints:
+                                asset.current_node = asset.current_path[0]
+                                asset.current_path.pop(0)
+                        else:
+                            asset.location.lat += move_x
+                            asset.location.lng += move_y
             
             asset.time_worked_minutes += 1.0
             if asset.status != AssetStatus.OFF_DUTY:

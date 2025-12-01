@@ -42,7 +42,8 @@ class Asset(BaseModel):
     time_worked_minutes: float = 0.0
     current_node: Optional[str] = None # For Graph Movement
     target_node: Optional[str] = None
-    current_path: Optional[list[str]] = [] # Path to follow
+    current_path: Optional[list[str]] = [] # Path to follow (list of Nodes)
+    current_segment_waypoints: Optional[list[Location]] = [] # Waypoints to next node
 
 class Event(BaseModel):
     event_id: str

@@ -398,10 +398,22 @@ export default function App() {
             // 4. Animate Movement along Path
             setMovingOfficerId(officerId);
 
+            // Waypoints for curved roads (approximate visual path)
+            const ROAD_WAYPOINTS = {
+                'SonySignal-StJohns': [{ x: 68, y: 30 }, { x: 65, y: 40 }], // 80ft road bend
+                'StJohns-SonySignal': [{ x: 65, y: 40 }, { x: 68, y: 30 }],
+                'SonySignal-Indiranagar100ft': [{ x: 75, y: 15 }, { x: 85, y: 12 }], // Domlur Flyover
+                'Indiranagar100ft-SonySignal': [{ x: 85, y: 12 }, { x: 75, y: 15 }],
+                'StJohns-MadiwalaMkt': [{ x: 65, y: 60 }, { x: 70, y: 70 }], // Hosur Road
+                'MadiwalaMkt-StJohns': [{ x: 70, y: 70 }, { x: 65, y: 60 }],
+                'ChristUniv-StJohns': [{ x: 52, y: 58 }, { x: 56, y: 54 }],
+                'StJohns-ChristUniv': [{ x: 56, y: 54 }, { x: 52, y: 58 }]
+            };
+
             let currentPathIndex = 0;
             const moveAlongPath = () => {
-                if (currentPathIndex >= pathIds.length) {
-                    // Arrived
+                if (currentPathIndex >= pathIds.length - 1) {
+                    // Arrived (End of path)
                     setMovingOfficerId(null);
                     addLog(`Unit ${officer.name} arrived at location.`, 'text-green-400');
 
@@ -423,30 +435,51 @@ export default function App() {
                     return;
                 }
 
-                const targetNodeId = pathIds[currentPathIndex];
-                const targetNode = ROAD_NODES[targetNodeId];
+                const currentNodeId = pathIds[currentPathIndex];
+                const nextNodeId = pathIds[currentPathIndex + 1];
+                const targetNode = ROAD_NODES[nextNodeId];
 
-                // Animate to this node
-                const steps = 60; // 1 second per segment
-                let step = 0;
+                // Check for waypoints
+                const edgeKey = `${currentNodeId}-${nextNodeId}`;
+                const waypoints = ROAD_WAYPOINTS[edgeKey] || [];
 
-                const segmentInterval = setInterval(() => {
-                    step++;
-                    setOfficers(prev => prev.map(o => {
-                        if (o.id === officerId) {
-                            const dx = (targetNode.x - o.x) / (steps - step + 1); // Simple easing
-                            const dy = (targetNode.y - o.y) / (steps - step + 1);
-                            return { ...o, x: o.x + dx, y: o.y + dy };
-                        }
-                        return o;
-                    }));
+                // Construct full segment path: [Waypoints..., TargetNode]
+                const segmentPoints = [...waypoints, { x: targetNode.x, y: targetNode.y }];
 
-                    if (step >= steps) {
-                        clearInterval(segmentInterval);
+                let segmentIndex = 0;
+
+                const animateSegment = () => {
+                    if (segmentIndex >= segmentPoints.length) {
+                        // Done with this edge, move to next node in path
                         currentPathIndex++;
-                        moveAlongPath(); // Next segment
+                        moveAlongPath();
+                        return;
                     }
-                }, 16);
+
+                    const targetPoint = segmentPoints[segmentIndex];
+                    const steps = 30; // Faster steps for smoother curves (0.5s per sub-segment)
+                    let step = 0;
+
+                    const interval = setInterval(() => {
+                        step++;
+                        setOfficers(prev => prev.map(o => {
+                            if (o.id === officerId) {
+                                const dx = (targetPoint.x - o.x) / (steps - step + 1);
+                                const dy = (targetPoint.y - o.y) / (steps - step + 1);
+                                return { ...o, x: o.x + dx, y: o.y + dy };
+                            }
+                            return o;
+                        }));
+
+                        if (step >= steps) {
+                            clearInterval(interval);
+                            segmentIndex++;
+                            animateSegment();
+                        }
+                    }, 16);
+                };
+
+                animateSegment();
             };
 
             moveAlongPath();
