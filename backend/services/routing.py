@@ -2,30 +2,36 @@ import math
 from typing import List, Tuple, Dict, Set
 from ..core.models import Location
 
-# --- DHUBRI SECTOR GRAPH ---
-# Coordinates approximated for key surveillance points.
+# --- BANGALORE (KORAMANGALA/MADIWALA) SECTOR GRAPH ---
+# Coordinates mapped to major intersections.
+# These match the visual "metro lines" from the frontend map.
 
 NODES = {
-    "DHUBRI_GHAT": (26.0207, 89.9743),
-    "GAURIPUR_JUNCTION": (26.0500, 89.9800),
-    "RIVER_BANK_NORTH": (26.0300, 89.9600),
-    "RIVER_BANK_SOUTH": (26.0100, 89.9600),
-    "BORDER_POST_1": (26.0800, 89.9200),
-    "BORDER_POST_2": (26.0600, 89.9300),
-    "BASE_STATION": (26.0400, 89.9700),
+    "SonySignal": (12.9450, 77.6250),       # x: 70, y: 20
+    "ChristUniv": (12.9360, 77.6050),       # x: 48, y: 62
+    "MadiwalaMkt": (12.9220, 77.6180),      # x: 80, y: 80
+    "Koramangala5th": (12.9340, 77.6200),   # x: 25, y: 35
+    "ForumMall": (12.9350, 77.6100),        # x: 10, y: 10
+    "StJohns": (12.9300, 77.6200),          # x: 60, y: 50 (Central Hub)
+    "DairyCircle": (12.9380, 77.6000),      # x: 10, y: 60
+    "BTMJunction": (12.9150, 77.6100),      # x: 50, y: 90
+    "Indiranagar100ft": (12.9600, 77.6400)  # x: 90, y: 10
 }
 
-# Adjacency List (Flight Paths / Roads)
+# Adjacency List (Road Connections)
 # Format: (Node A, Node B)
 EDGES = [
-    ("BASE_STATION", "DHUBRI_GHAT"),
-    ("BASE_STATION", "GAURIPUR_JUNCTION"),
-    ("BASE_STATION", "RIVER_BANK_NORTH"),
-    ("RIVER_BANK_NORTH", "RIVER_BANK_SOUTH"),
-    ("RIVER_BANK_NORTH", "BORDER_POST_2"),
-    ("BORDER_POST_2", "BORDER_POST_1"),
-    ("GAURIPUR_JUNCTION", "BORDER_POST_1"),
-    ("DHUBRI_GHAT", "RIVER_BANK_SOUTH"),
+    ("SonySignal", "StJohns"),
+    ("SonySignal", "Indiranagar100ft"),
+    ("ChristUniv", "StJohns"),
+    ("ChristUniv", "DairyCircle"),
+    ("ChristUniv", "BTMJunction"),
+    ("MadiwalaMkt", "StJohns"),
+    ("MadiwalaMkt", "BTMJunction"),
+    ("Koramangala5th", "StJohns"),
+    ("Koramangala5th", "ForumMall"),
+    ("DairyCircle", "ForumMall"),
+    ("StJohns", "Indiranagar100ft") # Ring Road connection
 ]
 
 class RoadNetwork:

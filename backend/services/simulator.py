@@ -10,9 +10,9 @@ from ..core.models import Asset, AssetType, AssetStatus, Event, EventType, Event
 from ..core.utils import haversine_distance
 from .routing import RoadNetwork
 
-# Dhubri Sector Bounds
-LAT_MIN, LAT_MAX = 26.0100, 26.0800
-LNG_MIN, LNG_MAX = 89.9200, 89.9800
+# Bangalore (Koramangala/Madiwala) Sector Bounds
+LAT_MIN, LAT_MAX = 12.9100, 12.9600
+LNG_MIN, LNG_MAX = 77.6000, 77.6500
 
 class Simulator:
     def __init__(self):
@@ -105,7 +105,7 @@ class Simulator:
             for evt in self.events.values():
                 heatmap_data.append([evt.location.lat, evt.location.lng, evt.severity / 10.0])
             
-            hotspot = self.road_network.nodes["DHUBRI_GHAT"]
+            hotspot = self.road_network.nodes["StJohns"]
             heatmap_data.append([hotspot[0], hotspot[1], 0.8])
 
             state = {
