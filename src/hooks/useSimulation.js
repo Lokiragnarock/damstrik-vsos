@@ -55,7 +55,7 @@ export const useSimulation = (demoMode = true) => {
         setOfficers(prev => prev.map(o => o.id === officerId ? { ...o, status: 'busy' } : o));
         setIncidents(prev => prev.map(i => i.id === incidentId ? { ...i, status: 'assigned', assignedTo: officerId } : i));
 
-        // Animation Logic
+        // Animation Logic - Simply use fixed slow speed for all segments
         let currentPathIndex = 0;
 
         const moveAlongPath = () => {
@@ -70,7 +70,7 @@ export const useSimulation = (demoMode = true) => {
                         return newRoutes;
                     });
                     addLog(`Incident resolved by ${officer.name}.`, 'text-slate-400');
-                }, 5000); // Faster resolution for demo
+                }, 5000);
                 return;
             }
 
@@ -91,21 +91,8 @@ export const useSimulation = (demoMode = true) => {
                 }
 
                 const targetPoint = segmentPoints[segmentIndex];
-
-                // Calculate distance for this segment (in degrees)
-                // 1 degree ≈ 111 km, so we convert to km
-                const currentOfficer = officers.find(o => o.id === officerId);
-                const distKm = Math.sqrt(
-                    Math.pow((targetPoint.lat - currentOfficer.lat) * 111, 2) +
-                    Math.pow((targetPoint.lng - currentOfficer.lng) * 111, 2)
-                );
-
-                // Speed: 20 km/h = 0.00556 km/s
-                // Duration = distance / speed (in seconds)
-                const durationSeconds = distKm / 0.00556;
-
-                // Frame interval: 60fps = 16.67ms per frame
-                const steps = Math.max(30, Math.floor(durationSeconds * 60)); // At least 30 frames (0.5s minimum)
+                // Fixed speed: 120 frames = 2 seconds per segment (roughly 20-30 km/h depending on distance)
+                const steps = 120;
                 let step = 0;
 
                 const interval = setInterval(() => {
@@ -159,7 +146,7 @@ export const useSimulation = (demoMode = true) => {
                             newIncident = { id: `inc-${Date.now()}`, type: 'assault', location: 'Madiwala Market', time: 'Live Feed', status: 'pending', priority: 'critical', lat: 12.9250, lng: 77.6190, desc: 'Officer requesting backup.' };
                         }
                         setIncidents([newIncident]);
-                    }, 3000); // Fast scan (3s)
+                    }, 3000);
                     break;
 
                 case 'detected':
@@ -172,14 +159,10 @@ export const useSimulation = (demoMode = true) => {
 
                 case 'dispatching':
                     timer = setTimeout(() => {
-                        // Auto-dispatch if no manual action taken
                         const incident = incidents.find(i => i.status !== 'assigned');
                         if (incident) {
-                            // Simple fit score logic (duplicated from App.jsx for now, or move to helper)
-                            // We just need ANY available officer for the demo
                             const availableOfficers = officers.filter(o => o.status !== 'busy');
                             if (availableOfficers.length > 0) {
-                                // Find closest
                                 const best = availableOfficers.sort((a, b) => {
                                     const distA = Math.sqrt((a.lat - incident.lat) ** 2 + (a.lng - incident.lng) ** 2);
                                     const distB = Math.sqrt((b.lat - incident.lat) ** 2 + (b.lng - incident.lng) ** 2);
@@ -188,12 +171,10 @@ export const useSimulation = (demoMode = true) => {
 
                                 addLog(`Auto-Authorizing Dispatch for Officer ${best.name}...`, 'text-green-300');
                                 dispatchOfficer(best.id, incident.id);
-                                // Note: dispatchOfficer doesn't advance stage, we do it here or rely on timeout?
-                                // Actually, let's just advance stage here to keep loop moving
                                 setDemoStage('resolved');
                             } else {
                                 addLog("No units available. Queuing...", 'text-orange-300');
-                                setDemoStage('resolved'); // Skip to next
+                                setDemoStage('resolved');
                             }
                         } else {
                             setDemoStage('resolved');
@@ -206,7 +187,7 @@ export const useSimulation = (demoMode = true) => {
                         setScenarioIndex(prev => prev + 1);
                         setIncidents([]);
                         setDemoStage('scanning');
-                    }, 8000); // Wait a bit before clearing and restarting
+                    }, 8000);
                     break;
             }
         };
