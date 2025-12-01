@@ -1,7 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 import { INITIAL_OFFICERS } from '../data/officers';
-import { ROAD_NODES } from '../data/grid';
-import { usePathfinding } from './usePathfinding';
 
 export const useSimulation = (demoMode = true) => {
     const [officers, setOfficers] = useState(INITIAL_OFFICERS);
@@ -11,21 +9,95 @@ export const useSimulation = (demoMode = true) => {
     const [demoStage, setDemoStage] = useState('scanning');
     const [scenarioIndex, setScenarioIndex] = useState(0);
 
-    const { getNearestNode, findPath } = usePathfinding();
-
     const addLog = useCallback((msg, color = 'text-slate-300') => {
         const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
         setLogs(prev => [...prev.slice(-20), { time, msg, color }]);
     }, []);
 
-    const repositionOthers = useCallback((dispatchedOfficerId) => {
-        setOfficers(prev => prev.map(o => {
-            if (o.id === dispatchedOfficerId || o.status === 'busy') return o;
-            const nearestNode = getNearestNode(o.lat, o.lng);
-            if (nearestNode) {
-                return { ...o, lat: o.lat + (nearestNode.lat - o.lat) * 0.05, lng: o.lng + (nearestNode.lng - o.lng) * 0.05 };
+    const dispatchOfficer = useCallback((officerId, incidentId) => {
+        let officer = null;
+        let incident = null;
+
+        setOfficers(prev => {
+            officer = prev.find(o => o.id === officerId);
+            return prev;
+        });
+
+        setIncidents(prev => {
+            incident = prev.find(i => i.id === incidentId);
+            return prev;
+        });
+
+        if (!officer || !incident) return;
+
+        addLog(`Dispatching ${officer.name} to ${incident.location}...`, 'text-yellow-400');
+
+        // Simple route: straight line from officer to incident
+        setActiveRoutes(prev => ({
+            ...prev,
+            [incident.id]: [[officer.lat, officer.lng], [incident.lat, incident.lng]]
+        }));
+
+        setOfficers(prev => prev.map(o => o.id === officerId ? { ...o, status: 'busy' } : o));
+        setIncidents(prev => prev.map(i => i.id === incidentId ? { ...i, status: 'assigned', assignedTo: officerId } : i));
+
+        // DIRECT STRAIGHT-LINE MOVEMENT
+        const startLat = officer.lat;
+        const startLng = officer.lng;
+        const targetLat = incident.lat;
+        const targetLng = incident.lng;
+
+        const distKm = Math.sqrt(
+            Math.pow((targetLat - startLat) * 111, 2) +
+            Math.pow((targetLng - startLng) * 111, 2)
+        );
+
+        const durationSeconds = Math.max(3, distKm / 0.00556);
+        const steps = Math.floor(durationSeconds * 60);
+        let step = 0;
+
+        const interval = setInterval(() => {
+            step++;
+            const progress = step / steps;
+
+            setOfficers(prev => prev.map(o => {
+                if (o.id === officerId) {
+                    return {
+                        ...o,
+                        lat: startLat + (targetLat - startLat) * progress,
+                        lng: startLng + (targetLng - startLng) * progress
+                    };
+                }
+                return o;
+            }));
+
+            if (step >= steps) {
+                clearInterval(interval);
+                addLog(`Unit ${officer.name} arrived. Solving...`, 'text-green-400');
+                setTimeout(() => {
+                    setOfficers(prev => prev.map(o => o.id === officerId ? {
+                        ...o,
+                        status: 'patrol',
+                        lat: incident.lat,
+                        lng: incident.lng
+                    } : o));
+                    setActiveRoutes(prev => {
+                        const newRoutes = { ...prev };
+                        delete newRoutes[incident.id];
+                        return newRoutes;
+                    });
+                    addLog(`Incident resolved by ${officer.name}.`, 'text-slate-400');
+                }, 10000);
             }
-            return o;
+        }, 16);
+
+    }, [addLog]);
+
+    useEffect(() => {
+        if (!demoMode) return;
+
+        let timer;
+        const advanceStage = () => {
             switch (demoStage) {
                 case 'scanning':
                     timer = setTimeout(() => {
