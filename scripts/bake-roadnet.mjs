@@ -51,7 +51,8 @@ function compact(json) {
                 Math.round(g.lat * 1e5) / 1e5,
                 Math.round(g.lon * 1e5) / 1e5
             ]),
-            oneway: el.tags?.oneway === 'yes'
+            oneway: el.tags?.oneway === 'yes',
+            highway: el.tags?.highway || 'unclassified'
         });
     }
     return { ways };

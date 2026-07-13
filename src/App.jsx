@@ -80,6 +80,96 @@ const snapLatLng = (lat, lng) => {
 
 const calculateDistance = (lat1, lng1, lat2, lng2) => Math.sqrt(Math.pow(lat2 - lat1, 2) + Math.pow(lng2 - lng1, 2));
 
+// --- SPEED MODEL & SIM CLOCK ---
+// The simulation clock runs SIM_SPEED x faster than wall time. All kinematics
+// below are computed in sim-seconds with REAL Bengaluru driving speeds, so the
+// speedometer reads true km/h while a 2km run stays watchable.
+export const SIM_SPEED = 8;
+
+// Response-driving speeds per OSM road class (km/h, Bengaluru realistic).
+const ROAD_SPEED_KMH = { trunk: 42, primary: 42, secondary: 34, tertiary: 28, unclassified: 20, residential: 20 };
+const ACCEL_MS2 = 2.2;     // pull-away acceleration from stops
+const DECEL_MS2 = 2.8;     // braking into junctions and turns
+const JUNCTION_KMH = 12;   // brief slow rolling through every graph node
+const SHARP_TURN_KMH = 10; // turns sharper than 45 degrees
+
+const roadClassOf = (highway) => (highway || 'unclassified').replace(/_link$/, '');
+const responseSpeedKmh = (highway) => ROAD_SPEED_KMH[roadClassOf(highway)] ?? 20;
+const patrolSpeedKmh = (highway) => responseSpeedKmh(highway) * 0.6; // cruising
+
+// Deflection angle at vertex b between segments a->b and b->c (degrees, 0 = straight).
+const turnAngleDeg = (a, b, c) => {
+    const scale = Math.cos(b.lat * Math.PI / 180);
+    const v1x = (b.lng - a.lng) * scale, v1y = b.lat - a.lat;
+    const v2x = (c.lng - b.lng) * scale, v2y = c.lat - b.lat;
+    const d1 = Math.hypot(v1x, v1y), d2 = Math.hypot(v2x, v2y);
+    if (d1 < 1e-12 || d2 < 1e-12) return 0;
+    const cos = Math.max(-1, Math.min(1, (v1x * v2x + v1y * v2y) / (d1 * d2)));
+    return Math.acos(cos) * 180 / Math.PI;
+};
+
+// Braking-aware speed profile over a route of {lat,lng,highway,isNode} points:
+// per-segment cruise limits plus per-vertex ceilings chained backwards so the
+// unit always has room to decelerate into the next junction/turn/stop.
+function buildSpeedProfile(route, speedForKmh) {
+    const n = route.length;
+    const segLens = [];
+    const segLimit = []; // m/s cruise cap per segment
+    let totalKm = 0;
+    for (let i = 0; i < n - 1; i++) {
+        const d = distKmBetween(route[i], route[i + 1]);
+        segLens.push(d);
+        totalKm += d;
+        segLimit.push(Math.min(speedForKmh(route[i].highway), speedForKmh(route[i + 1].highway)) / 3.6);
+    }
+    const allowed = new Array(n); // m/s ceiling at each vertex
+    for (let i = 0; i < n; i++) {
+        let capKmh = speedForKmh(route[i].highway);
+        if (i > 0 && i < n - 1) {
+            if (route[i].isNode) capKmh = Math.min(capKmh, JUNCTION_KMH);
+            if (turnAngleDeg(route[i - 1], route[i], route[i + 1]) > 45) capKmh = Math.min(capKmh, SHARP_TURN_KMH);
+        }
+        allowed[i] = capKmh / 3.6;
+    }
+    allowed[n - 1] = 0; // full stop at the destination
+    for (let i = n - 2; i >= 0; i--) {
+        const segM = segLens[i] * 1000;
+        allowed[i] = Math.min(allowed[i], Math.sqrt(allowed[i + 1] ** 2 + 2 * DECEL_MS2 * segM));
+    }
+    return { segLens, segLimit, allowed, totalKm };
+}
+
+// Advance kinematic state {dKm, vMs} by simDt sim-seconds along a profiled route.
+// Speed changes are continuous: bounded by ACCEL up, DECEL down, and the
+// braking-distance ceiling toward the next vertex.
+function stepKinematics(state, profile, simDt) {
+    const { segLens, segLimit, allowed, totalKm } = profile;
+    let acc = 0, i = 0;
+    while (i < segLens.length - 1 && acc + segLens[i] < state.dKm) { acc += segLens[i]; i++; }
+    const distToNextM = Math.max(0, (acc + (segLens[i] || 0) - state.dKm) * 1000);
+    const nextCeil = allowed[Math.min(i + 1, allowed.length - 1)];
+    const cap = Math.min(segLimit[i] ?? 0, Math.sqrt(nextCeil ** 2 + 2 * DECEL_MS2 * distToNextM));
+    state.vMs = Math.max(Math.min(state.vMs + ACCEL_MS2 * simDt, cap), state.vMs - DECEL_MS2 * simDt);
+    state.dKm += state.vMs * simDt / 1000;
+    return state.dKm >= totalKm - 0.002; // within 2m of the stop point counts as arrived
+}
+
+// Position at cumulative distance dKm along a route polyline.
+function pointAlongRoute(route, segLens, dKm) {
+    let acc = 0;
+    for (let i = 0; i < segLens.length; i++) {
+        if (acc + segLens[i] >= dKm) {
+            const f = segLens[i] === 0 ? 0 : (dKm - acc) / segLens[i];
+            return {
+                lat: route[i].lat + (route[i + 1].lat - route[i].lat) * f,
+                lng: route[i].lng + (route[i + 1].lng - route[i].lng) * f
+            };
+        }
+        acc += segLens[i];
+    }
+    return route[route.length - 1];
+}
+
 // --- MOCK BACKEND DATA ---
 
 const ZONES = [
@@ -279,10 +369,12 @@ export default function App() {
         setLogs(prev => [...prev.slice(-20), { time, msg, color }]);
     }, []);
 
-    // Idle patrol: officers not currently dispatched crawl along the road graph,
+    // Idle patrol: officers not currently dispatched cruise along the road graph,
     // edge by edge, turning randomly at intersections and pausing occasionally.
+    // Cruising speed is 60% of the road class's response speed, with the same
+    // accelerate-from-stop / brake-into-junction kinematics as dispatch runs.
     useEffect(() => {
-        const STEP_KM = 0.003; // ~25km/h scaled down for a watchable demo, per 500ms tick
+        const TICK_MS = 500;
         const tick = setInterval(() => {
             const now = Date.now();
             setOfficers(prev => prev.map(o => {
@@ -290,13 +382,16 @@ export default function App() {
                 const state = patrolStateRef.current[o.id];
 
                 if (state?.pausedUntil) {
-                    if (now < state.pausedUntil) return o; // still holding position
+                    if (now < state.pausedUntil) {
+                        return o.speedKmh ? { ...o, speedKmh: 0 } : o; // holding position
+                    }
                     state.pausedUntil = null;
                 }
 
                 let leg = state?.leg;
                 let fromNodeId = state?.fromNodeId ?? null;
                 let progressKm = state?.progressKm ?? 0;
+                let vMs = state?.vMs ?? 0;
 
                 if (!leg) {
                     const step = randomWalkStep({ lat: o.lat, lng: o.lng }, fromNodeId);
@@ -305,12 +400,24 @@ export default function App() {
                     for (let i = 1; i < step.coords.length; i++) {
                         cumKm.push(cumKm[i - 1] + distKmBetween(step.coords[i - 1], step.coords[i]));
                     }
-                    leg = { coords: step.coords, cumKm, lengthKm: step.lengthKm, toNodeId: step.toNodeId, fromNodeId: step.fromNodeId };
+                    leg = { coords: step.coords, cumKm, lengthKm: step.lengthKm, toNodeId: step.toNodeId, fromNodeId: step.fromNodeId, highway: step.highway };
                     fromNodeId = step.fromNodeId;
                     progressKm = 0;
                 }
 
-                progressKm += STEP_KM;
+                // Integrate patrol kinematics in 1s sim substeps: accelerate toward
+                // cruise speed, brake so we roll through the end junction slowly.
+                const cruiseMs = patrolSpeedKmh(leg.highway) / 3.6;
+                const junctionMs = JUNCTION_KMH / 3.6;
+                let remainingSimS = (TICK_MS / 1000) * SIM_SPEED;
+                while (remainingSimS > 0 && progressKm < leg.lengthKm) {
+                    const dt = Math.min(1, remainingSimS);
+                    const remainM = Math.max(0, (leg.lengthKm - progressKm) * 1000);
+                    const cap = Math.min(cruiseMs, Math.sqrt(junctionMs ** 2 + 2 * DECEL_MS2 * remainM));
+                    vMs = Math.max(Math.min(vMs + ACCEL_MS2 * dt, cap), vMs - DECEL_MS2 * dt);
+                    progressKm += vMs * dt / 1000;
+                    remainingSimS -= dt;
+                }
 
                 if (progressKm >= leg.lengthKm) {
                     // Reached the intersection at the end of this edge.
@@ -320,9 +427,10 @@ export default function App() {
                         leg: null,
                         fromNodeId: leg.fromNodeId,
                         progressKm: 0,
+                        vMs: shouldPause ? 0 : vMs,
                         pausedUntil: shouldPause ? now + (10000 + Math.random() * 20000) : null
                     };
-                    return { ...o, lat: endPos.lat, lng: endPos.lng };
+                    return { ...o, lat: endPos.lat, lng: endPos.lng, speedKmh: shouldPause ? 0 : vMs * 3.6 };
                 }
 
                 // Interpolate position along the current leg's real street geometry.
@@ -339,10 +447,10 @@ export default function App() {
                         break;
                     }
                 }
-                patrolStateRef.current[o.id] = { leg, fromNodeId, progressKm, pausedUntil: null };
-                return { ...o, lat: pos.lat, lng: pos.lng };
+                patrolStateRef.current[o.id] = { leg, fromNodeId, progressKm, vMs, pausedUntil: null };
+                return { ...o, lat: pos.lat, lng: pos.lng, speedKmh: vMs * 3.6 };
             }));
-        }, 500);
+        }, TICK_MS);
         return () => clearInterval(tick);
     }, []);
 
@@ -372,41 +480,42 @@ export default function App() {
             setOfficers(prev => prev.map(o => o.id === officerId ? { ...o, status: 'busy' } : o));
             setIncidents(prev => prev.map(i => i.status !== 'assigned' ? { ...i, status: 'assigned', assignedTo: officerId } : i));
 
-            // 3. Animate along the route at constant speed
+            // 3. Animate along the route with real kinematics on the sim clock
             setMovingOfficerId(officerId);
 
-            const segLens = [];
-            let totalKm = 0;
-            for (let i = 0; i < route.length - 1; i++) {
-                const d = distKmBetween(route[i], route[i + 1]);
-                segLens.push(d);
-                totalKm += d;
+            const profile = buildSpeedProfile(route, responseSpeedKmh);
+            const { segLens, totalKm } = profile;
+
+            // Pre-simulate the run coarsely to log distance + ETA up front
+            let etaSimS = 0;
+            {
+                const trial = { dKm: 0, vMs: 0 };
+                let guard = 0;
+                while (!stepKinematics(trial, profile, 0.5) && guard++ < 20000) etaSimS += 0.5;
             }
-            // Demo pacing: ~6s per km, clamped so trips stay watchable
-            const durationMs = Math.min(25000, Math.max(8000, totalKm * 6000));
-            const startTime = performance.now();
+            addLog(`Dispatch route: ${totalKm.toFixed(1)} km — ETA ${Math.round(etaSimS / SIM_SPEED)}s @ SIM ${SIM_SPEED}×`, 'text-cyan-300');
 
-            // setInterval (not rAF): keeps advancing even in hidden/background tabs;
-            // progress is wall-clock based so throttled ticks stay position-accurate
+            const kin = { dKm: 0, vMs: 0 };
+            let lastTick = performance.now();
+            let arrived = route.length < 2;
+
+            // setInterval (not rAF): keeps advancing even in hidden/background tabs.
+            // Elapsed wall time is integrated in small sim-time substeps, so
+            // throttled background ticks stay position-accurate.
             const moveTimer = setInterval(() => {
-                const t = Math.min(1, (performance.now() - startTime) / durationMs);
-                const targetDist = t * totalKm;
-                let acc = 0;
-                let pos = route[route.length - 1];
-                for (let i = 0; i < segLens.length; i++) {
-                    if (acc + segLens[i] >= targetDist) {
-                        const f = segLens[i] === 0 ? 0 : (targetDist - acc) / segLens[i];
-                        pos = {
-                            lat: route[i].lat + (route[i + 1].lat - route[i].lat) * f,
-                            lng: route[i].lng + (route[i + 1].lng - route[i].lng) * f
-                        };
-                        break;
-                    }
-                    acc += segLens[i];
+                const now = performance.now();
+                let remainingSimS = ((now - lastTick) / 1000) * SIM_SPEED;
+                lastTick = now;
+                while (remainingSimS > 0 && !arrived) {
+                    const dt = Math.min(0.25, remainingSimS);
+                    arrived = stepKinematics(kin, profile, dt);
+                    remainingSimS -= dt;
                 }
-                setOfficers(prev => prev.map(o => o.id === officerId ? { ...o, lat: pos.lat, lng: pos.lng } : o));
+                const pos = arrived ? route[route.length - 1] : pointAlongRoute(route, segLens, Math.min(kin.dKm, totalKm));
+                const speedKmh = arrived ? 0 : kin.vMs * 3.6;
+                setOfficers(prev => prev.map(o => o.id === officerId ? { ...o, lat: pos.lat, lng: pos.lng, speedKmh } : o));
 
-                if (t < 1) return;
+                if (!arrived) return;
                 // Arrived — unit holds at the road-snapped end of the route
                 clearInterval(moveTimer);
                 setMovingOfficerId(null);
@@ -670,6 +779,7 @@ export default function App() {
                                 <div className="text-right">
                                     <div className={`text-[10px] font-bold uppercase ${officer.status === 'busy' ? 'text-blue-400' : 'text-slate-500'}`}>{officer.status}</div>
                                     <div className={`text-[10px] font-mono mt-0.5 ${officer.fatigue > 50 ? 'text-yellow-500' : 'text-emerald-500'}`}>{officer.fatigue}% FTG</div>
+                                    <div className={`text-[10px] font-mono mt-0.5 ${(officer.speedKmh || 0) >= 0.5 ? 'text-cyan-400' : 'text-slate-600'}`}>{Math.round(officer.speedKmh || 0)} km/h</div>
                                 </div>
                             </div>
                         ))}
@@ -728,6 +838,7 @@ export default function App() {
                                                  <div class="w-8 h-8 rounded-full border-2 ${officer.status === 'busy' ? 'bg-blue-600 border-white shadow-[0_0_15px_rgba(37,99,235,0.8)]' : 'bg-slate-900 border-blue-500 shadow-[0_0_10px_rgba(0,0,0,0.5)]'} flex items-center justify-center transition-all">
                                                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="transform ${officer.status === 'busy' ? 'animate-pulse' : 'rotate-45'}"><polygon points="3 11 22 2 13 21 11 13 3 11"></polygon></svg>
                                                  </div>
+                                                 ${(officer.speedKmh || 0) >= 0.5 ? `<div class="absolute top-full left-1/2 -translate-x-1/2 mt-0.5 px-1.5 rounded-full bg-slate-900/90 border border-slate-600 text-[9px] font-mono font-bold text-emerald-300 whitespace-nowrap leading-tight">${Math.round(officer.speedKmh)} km/h</div>` : ''}
                                                </div>`,
                                         iconSize: [32, 32],
                                         iconAnchor: [16, 16]
@@ -792,6 +903,11 @@ export default function App() {
                                 <MapIcon className="w-3 h-3 inline mr-2" />
                                 ROADNET
                             </button>
+                        </div>
+
+                        {/* SIM CLOCK BADGE - time compression is honest and visible */}
+                        <div className="absolute bottom-4 right-4 z-[1000] px-3 py-1.5 text-xs font-bold font-mono rounded bg-slate-900/80 border border-slate-700 text-cyan-300 pointer-events-none shadow-lg">
+                            SIM {SIM_SPEED}×
                         </div>
                     </div>
 

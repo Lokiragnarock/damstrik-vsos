@@ -67,7 +67,7 @@ function buildGraph() {
 
             if (lengthKm > 1e-9 && aId !== bId) {
                 const edgeId = `e${edgeCounter++}`;
-                const edge = { id: edgeId, a: aId, b: bId, coords, cumKm, lengthKm, oneway: !!way.oneway };
+                const edge = { id: edgeId, a: aId, b: bId, coords, cumKm, lengthKm, oneway: !!way.oneway, highway: way.highway || 'unclassified' };
                 edges.set(edgeId, edge);
                 adjacency.get(aId).push({ edgeId, to: bId, forward: true });
                 if (!way.oneway) {
@@ -220,10 +220,11 @@ function reconstructNodePath(prev, sourceNodes, destNode) {
 export function shortestPath(fromPos, toPos) {
     const fromSnap = nearestPointOnGraph(fromPos.lat, fromPos.lng);
     const toSnap = nearestPointOnGraph(toPos.lat, toPos.lng);
-    if (!fromSnap || !toSnap) return [fromPos, toPos];
+    if (!fromSnap || !toSnap) return [{ ...fromPos, highway: 'unclassified', isNode: true }, { ...toPos, highway: 'unclassified', isNode: true }];
 
     if (fromSnap.edgeId === toSnap.edgeId) {
-        return sliceBetween(GRAPH.edges.get(fromSnap.edgeId), fromSnap.t, toSnap.t);
+        const edge = GRAPH.edges.get(fromSnap.edgeId);
+        return sliceBetween(edge, fromSnap.t, toSnap.t).map((c, i, arr) => ({ ...c, highway: edge.highway, isNode: i === 0 || i === arr.length - 1 }));
     }
 
     const fromEdge = GRAPH.edges.get(fromSnap.edgeId);
@@ -258,24 +259,32 @@ export function shortestPath(fromPos, toPos) {
     if (!recon) return [fromPos, toPos];
 
     const path = [];
-    const pushCoords = (coords) => {
-        for (const c of coords) {
+    // isNode marks points that sit at a real graph intersection (edge boundary),
+    // as opposed to an interior shape vertex along a single way - used to apply
+    // junction slow-downs in the speed model.
+    const pushCoords = (coords, highway, markNodesAt) => {
+        for (let k = 0; k < coords.length; k++) {
+            const c = coords[k];
             const lastPt = path[path.length - 1];
             if (lastPt && Math.abs(lastPt.lat - c.lat) < 1e-9 && Math.abs(lastPt.lng - c.lng) < 1e-9) continue;
-            path.push(c);
+            const isNode = markNodesAt ? markNodesAt.has(k) : false;
+            path.push({ lat: c.lat, lng: c.lng, highway, isNode });
         }
     };
 
     // Partial geometry from the snapped start point to the chosen origin node.
-    pushCoords(sliceBetween(fromEdge, fromSnap.t, recon.sourceNode === fromEdge.a ? 0 : 1));
+    const fromCoords = sliceBetween(fromEdge, fromSnap.t, recon.sourceNode === fromEdge.a ? 0 : 1);
+    pushCoords(fromCoords, fromEdge.highway, new Set([fromCoords.length - 1]));
     // Full edges along the node path.
     for (const hop of recon.hops) {
         const edge = GRAPH.edges.get(hop.edgeId);
-        pushCoords(orientedCoords(edge, hop.forward));
+        const coords = orientedCoords(edge, hop.forward);
+        pushCoords(coords, edge.highway, new Set([coords.length - 1]));
     }
     // Partial geometry from the destination node to the snapped end point.
-    pushCoords(sliceBetween(toEdge, best.isA ? 0 : 1, toSnap.t));
+    pushCoords(sliceBetween(toEdge, best.isA ? 0 : 1, toSnap.t), toEdge.highway, null);
 
+    if (path.length && path[0].isNode === undefined) path[0].isNode = true;
     return path;
 }
 
@@ -306,7 +315,8 @@ export function randomWalkStep(pos, prevNodeId) {
         fromNodeId: nearestNodeId,
         toNodeId: arc.to,
         coords: orientedCoords(edge, arc.forward),
-        lengthKm: edge.lengthKm
+        lengthKm: edge.lengthKm,
+        highway: edge.highway
     };
 }
 
