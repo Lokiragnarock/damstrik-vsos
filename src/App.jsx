@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline, Circle, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, Circle, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {
     Shield, Map as MapIcon, Radio, Users, Bell, Search, Activity, Clock, CheckCircle, AlertTriangle, Zap, Navigation, Battery, Award, ChevronRight, X, Target, Wifi, Database, Play, Pause, Sparkles, BrainCircuit, CloudRain, TrendingUp, FileText, PhoneCall, Mic, Server
 } from 'lucide-react';
+import { nearestPointOnGraph, shortestPath, randomWalkStep, allEdges } from './roadnet/graph';
 
 // --- GEMINI API INTEGRATION ---
 const apiKey = ""; // API Key injected by environment
@@ -59,108 +60,25 @@ const callGeminiStrategy = async (incident, officer) => {
     }
 };
 
-// --- ROAD NETWORK GRAPH (Bangalore - Koramangala/Madiwala Layout) ---
-// Nodes represent major intersections. Edges represent roads.
-const ROAD_NODES = {
-    'SonySignal': { lat: 12.9450, lng: 77.6250, id: 'SonySignal', name: 'Sony World Signal' },
-    'ChristUniv': { lat: 12.9360, lng: 77.6050, id: 'ChristUniv', name: 'Christ University' },
-    'MadiwalaMkt': { lat: 12.9220, lng: 77.6180, id: 'MadiwalaMkt', name: 'Madiwala Market' },
-    'Koramangala5th': { lat: 12.9340, lng: 77.6200, id: 'Koramangala5th', name: 'Koramangala 5th Block' },
-    'ForumMall': { lat: 12.9350, lng: 77.6100, id: 'ForumMall', name: 'Forum Mall' },
-    'StJohns': { lat: 12.9300, lng: 77.6200, id: 'StJohns', name: 'St. Johns Signal' }, // Central Hub
-    'DairyCircle': { lat: 12.9380, lng: 77.6000, id: 'DairyCircle', name: 'Dairy Circle' },
-    'BTMJunction': { lat: 12.9150, lng: 77.6100, id: 'BTMJunction', name: 'BTM Junction' },
-    'Indiranagar100ft': { lat: 12.9600, lng: 77.6400, id: 'Indiranagar100ft', name: 'Indiranagar 100ft' },
-    'WiproPark': { lat: 12.9320, lng: 77.6300, id: 'WiproPark', name: 'Wipro Park' },
-    'Koramangala80ft': { lat: 12.9400, lng: 77.6200, id: 'Koramangala80ft', name: '80ft Road' },
-    'JyotiNivas': { lat: 12.9330, lng: 77.6150, id: 'JyotiNivas', name: 'Jyoti Nivas College' },
-    'CheckPost': { lat: 12.9250, lng: 77.6250, id: 'CheckPost', name: 'Check Post' }
+// --- ROAD NETWORK (bundled OSM extract - see src/roadnet/graph.js) ---
+// Cars are graph-locked: every officer/incident position is snapped onto this
+// network, and routes/patrol movement only ever follow its edge geometry.
+const ALL_ROAD_EDGES = allEdges();
+
+// Planar distance in km (fine at city scale)
+const distKmBetween = (a, b) => {
+    const dLat = (b.lat - a.lat) * 110.574;
+    const dLng = (b.lng - a.lng) * 111.32 * Math.cos(a.lat * Math.PI / 180);
+    return Math.sqrt(dLat * dLat + dLng * dLng);
 };
 
-const ROAD_EDGES = [
-    ['SonySignal', 'StJohns'],
-    ['SonySignal', 'Indiranagar100ft'],
-    ['ChristUniv', 'StJohns'],
-    ['ChristUniv', 'DairyCircle'],
-    ['ChristUniv', 'BTMJunction'],
-    ['MadiwalaMkt', 'StJohns'],
-    ['MadiwalaMkt', 'BTMJunction'],
-    ['Koramangala5th', 'StJohns'],
-    ['Koramangala5th', 'ForumMall'],
-    ['DairyCircle', 'ForumMall'],
-    ['StJohns', 'Indiranagar100ft'] // Ring Road connection
-];
-
-// Build Adjacency List
-const ADJ_LIST = {};
-Object.keys(ROAD_NODES).forEach(id => ADJ_LIST[id] = []);
-ROAD_EDGES.forEach(([a, b]) => {
-    ADJ_LIST[a].push(b);
-    ADJ_LIST[b].push(a);
-});
-
-// Helper: Find nearest road node to any point
-const getNearestNode = (lat, lng) => {
-    let min = Infinity;
-    let nearest = null;
-    Object.values(ROAD_NODES).forEach(node => {
-        const d = Math.sqrt((node.lat - lat) ** 2 + (node.lng - lng) ** 2);
-        if (d < min) {
-            min = d;
-            nearest = node;
-        }
-    });
-    return nearest;
+// Snap a raw lat/lng onto the road graph (falls back to the raw point if ungraphed)
+const snapLatLng = (lat, lng) => {
+    const p = nearestPointOnGraph(lat, lng);
+    return p ? { lat: p.lat, lng: p.lng } : { lat, lng };
 };
 
 const calculateDistance = (lat1, lng1, lat2, lng2) => Math.sqrt(Math.pow(lat2 - lat1, 2) + Math.pow(lng2 - lng1, 2));
-
-// A* Pathfinding
-const findPath = (startNodeId, endNodeId) => {
-    const openSet = [startNodeId];
-    const cameFrom = {};
-    const gScore = {};
-    const fScore = {};
-
-    Object.keys(ROAD_NODES).forEach(id => {
-        gScore[id] = Infinity;
-        fScore[id] = Infinity;
-    });
-
-    gScore[startNodeId] = 0;
-    fScore[startNodeId] = calculateDistance(ROAD_NODES[startNodeId].lat, ROAD_NODES[startNodeId].lng, ROAD_NODES[endNodeId].lat, ROAD_NODES[endNodeId].lng);
-
-    while (openSet.length > 0) {
-        // Get node with lowest fScore
-        let current = openSet.reduce((a, b) => fScore[a] < fScore[b] ? a : b);
-
-        if (current === endNodeId) {
-            // Reconstruct path
-            const path = [current];
-            while (current in cameFrom) {
-                current = cameFrom[current];
-                path.unshift(current);
-            }
-            return path;
-        }
-
-        openSet.splice(openSet.indexOf(current), 1);
-
-        for (let neighbor of ADJ_LIST[current]) {
-            const tentativeGScore = gScore[current] + calculateDistance(ROAD_NODES[current].lat, ROAD_NODES[current].lng, ROAD_NODES[neighbor].lat, ROAD_NODES[neighbor].lng);
-
-            if (tentativeGScore < gScore[neighbor]) {
-                cameFrom[neighbor] = current;
-                gScore[neighbor] = tentativeGScore;
-                fScore[neighbor] = gScore[neighbor] + calculateDistance(ROAD_NODES[neighbor].lat, ROAD_NODES[neighbor].lng, ROAD_NODES[endNodeId].lat, ROAD_NODES[endNodeId].lng);
-                if (!openSet.includes(neighbor)) {
-                    openSet.push(neighbor);
-                }
-            }
-        }
-    }
-    return [startNodeId, endNodeId]; // Fallback direct line if no path
-};
 
 // --- MOCK BACKEND DATA ---
 
@@ -242,7 +160,8 @@ const CRIME_TYPES = {
     public_order: { label: 'Public Disturbance', color: 'text-yellow-400', bg: 'bg-yellow-500/20', border: 'border-yellow-500', mapColor: '#eab308' },
     traffic: { label: 'Traffic Gridlock', color: 'text-blue-400', bg: 'bg-blue-500/20', border: 'border-blue-500', mapColor: '#3b82f6' },
     predictive: { label: 'AI Prediction', color: 'text-cyan-400', bg: 'bg-cyan-500/20', border: 'border-cyan-500', mapColor: '#06b6d4' },
-    murder: { label: 'Homicide', color: 'text-rose-600', bg: 'bg-rose-600/20', border: 'border-rose-600', mapColor: '#e11d48' }
+    murder: { label: 'Homicide', color: 'text-rose-600', bg: 'bg-rose-600/20', border: 'border-rose-600', mapColor: '#e11d48' },
+    manual: { label: 'Operator Report', color: 'text-blue-400', bg: 'bg-blue-500/20', border: 'border-blue-500', mapColor: '#3b82f6' }
 };
 
 // --- LOGIC HELPERS ---
@@ -280,6 +199,16 @@ const RouteLine = ({ path }) => {
     return null;
 };
 
+// Click-anywhere-to-dispatch: must live inside <MapContainer> to use useMapEvents
+const MapClickHandler = ({ onMapClick }) => {
+    useMapEvents({
+        click(e) {
+            onMapClick(e.latlng.lat, e.latlng.lng);
+        }
+    });
+    return null;
+};
+
 const IngestionLogs = ({ logs }) => {
     const scrollRef = useRef(null);
 
@@ -309,7 +238,8 @@ const IngestionLogs = ({ logs }) => {
 
 // --- MAIN APP COMPONENT ---
 export default function App() {
-    const [officers, setOfficers] = useState(INITIAL_OFFICERS);
+    // Snap parked units onto the road graph synchronously at init (no more async OSRM round-trip)
+    const [officers, setOfficers] = useState(() => INITIAL_OFFICERS.map(o => ({ ...o, ...snapLatLng(o.lat, o.lng) })));
     const [incidents, setIncidents] = useState([]);
     const [selectedIncident, setSelectedIncident] = useState(null);
     const [selectedOfficer, setSelectedOfficer] = useState(null);
@@ -318,9 +248,19 @@ export default function App() {
     const [dispatching, setDispatching] = useState(false);
     const [heatmapMode, setHeatmapMode] = useState(true);
     const [patrolCarMode, setPatrolCarMode] = useState(true);
+    const [showRoadnet, setShowRoadnet] = useState(false);
     const [currentTime, setCurrentTime] = useState(new Date());
     const [movingOfficerId, setMovingOfficerId] = useState(null);
-    const [activeRoutes, setActiveRoutes] = useState({}); // { incidentId: [nodeId, nodeId...] }
+    const [activeRoutes, setActiveRoutes] = useState({}); // { incidentId: [[lat,lng], ...] }
+
+    // Latest incidents, readable from inside long-lived timers without stale closures
+    const incidentsRef = useRef(incidents);
+    useEffect(() => { incidentsRef.current = incidents; }, [incidents]);
+
+    // Per-officer idle patrol state, keyed by officer id: { coords, cumKm, lengthKm,
+    // progressKm, fromNodeId, pausedUntil }. Lives outside React state since it's
+    // advanced every tick and only the resulting lat/lng needs to trigger a render.
+    const patrolStateRef = useRef({});
 
     // AI State
     const [aiAdvice, setAiAdvice] = useState(null);
@@ -339,19 +279,71 @@ export default function App() {
         setLogs(prev => [...prev.slice(-20), { time, msg, color }]);
     }, []);
 
-    // --- LOGIC: REPOSITION OTHERS (COVERAGE ALGO) ---
-    const repositionOthers = useCallback((dispatchedOfficerId, targetLat, targetLng) => {
-        setOfficers(prev => prev.map(o => {
-            if (o.id === dispatchedOfficerId || o.status === 'busy') return o;
+    // Idle patrol: officers not currently dispatched crawl along the road graph,
+    // edge by edge, turning randomly at intersections and pausing occasionally.
+    useEffect(() => {
+        const STEP_KM = 0.003; // ~25km/h scaled down for a watchable demo, per 500ms tick
+        const tick = setInterval(() => {
+            const now = Date.now();
+            setOfficers(prev => prev.map(o => {
+                if (o.status !== 'patrol') return o;
+                const state = patrolStateRef.current[o.id];
 
-            // Move towards nearest road node to stay "on grid"
-            const nearestNode = getNearestNode(o.lat, o.lng);
-            if (nearestNode) {
-                // Slowly drift to nearest intersection if idle
-                return { ...o, lat: o.lat + (nearestNode.lat - o.lat) * 0.05, lng: o.lng + (nearestNode.lng - o.lng) * 0.05 };
-            }
-            return o;
-        }));
+                if (state?.pausedUntil) {
+                    if (now < state.pausedUntil) return o; // still holding position
+                    state.pausedUntil = null;
+                }
+
+                let leg = state?.leg;
+                let fromNodeId = state?.fromNodeId ?? null;
+                let progressKm = state?.progressKm ?? 0;
+
+                if (!leg) {
+                    const step = randomWalkStep({ lat: o.lat, lng: o.lng }, fromNodeId);
+                    if (!step) return o; // isolated node, nowhere to go
+                    const cumKm = [0];
+                    for (let i = 1; i < step.coords.length; i++) {
+                        cumKm.push(cumKm[i - 1] + distKmBetween(step.coords[i - 1], step.coords[i]));
+                    }
+                    leg = { coords: step.coords, cumKm, lengthKm: step.lengthKm, toNodeId: step.toNodeId, fromNodeId: step.fromNodeId };
+                    fromNodeId = step.fromNodeId;
+                    progressKm = 0;
+                }
+
+                progressKm += STEP_KM;
+
+                if (progressKm >= leg.lengthKm) {
+                    // Reached the intersection at the end of this edge.
+                    const endPos = leg.coords[leg.coords.length - 1];
+                    const shouldPause = Math.random() < 0.3;
+                    patrolStateRef.current[o.id] = {
+                        leg: null,
+                        fromNodeId: leg.fromNodeId,
+                        progressKm: 0,
+                        pausedUntil: shouldPause ? now + (10000 + Math.random() * 20000) : null
+                    };
+                    return { ...o, lat: endPos.lat, lng: endPos.lng };
+                }
+
+                // Interpolate position along the current leg's real street geometry.
+                const { coords, cumKm } = leg;
+                let pos = coords[coords.length - 1];
+                for (let i = 1; i < coords.length; i++) {
+                    if (cumKm[i] >= progressKm) {
+                        const segLen = cumKm[i] - cumKm[i - 1];
+                        const f = segLen < 1e-9 ? 0 : (progressKm - cumKm[i - 1]) / segLen;
+                        pos = {
+                            lat: coords[i - 1].lat + (coords[i].lat - coords[i - 1].lat) * f,
+                            lng: coords[i - 1].lng + (coords[i].lng - coords[i - 1].lng) * f
+                        };
+                        break;
+                    }
+                }
+                patrolStateRef.current[o.id] = { leg, fromNodeId, progressKm, pausedUntil: null };
+                return { ...o, lat: pos.lat, lng: pos.lng };
+            }));
+        }, 500);
+        return () => clearInterval(tick);
     }, []);
 
     // --- LOGIC: HANDLE DISPATCH ---
@@ -368,122 +360,74 @@ export default function App() {
                 return;
             }
 
-            // 1. Calculate Path on Road Network
-            const startNode = getNearestNode(officer.lat, officer.lng);
-            const endNode = getNearestNode(incident.lat, incident.lng);
+            // 1. Route along the graph's real street geometry (fully on-road, no fetch)
+            const route = shortestPath({ lat: officer.lat, lng: officer.lng }, { lat: incident.lat, lng: incident.lng });
 
-            if (!startNode || !endNode) {
-                console.error("Could not find nearest nodes for dispatch", officer, incident);
-                setDispatching(false);
-                return;
-            }
+            // Store route polyline for visualization
+            setActiveRoutes(prev => ({ ...prev, [incident.id]: route.map(p => [p.lat, p.lng]) }));
 
-            const pathIds = findPath(startNode.id, endNode.id);
-
-            // Store route for visualization
-            setActiveRoutes(prev => ({ ...prev, [incident.id]: pathIds }));
-
-            // 2. Trigger Repositioning
-            repositionOthers(officerId, officer.lat, officer.lng);
-
-            // 3. Update Status
+            // 2. Update Status - drop any idle-patrol state so the unit resumes
+            // patrolling fresh from the arrival point instead of a stale leg
+            patrolStateRef.current[officerId] = null;
             setOfficers(prev => prev.map(o => o.id === officerId ? { ...o, status: 'busy' } : o));
             setIncidents(prev => prev.map(i => i.status !== 'assigned' ? { ...i, status: 'assigned', assignedTo: officerId } : i));
 
-            // 4. Animate Movement along Path
+            // 3. Animate along the route at constant speed
             setMovingOfficerId(officerId);
 
-            // Waypoints for curved roads (approximate visual path)
-            const ROAD_WAYPOINTS = {
-                'SonySignal-StJohns': [{ lat: 12.9400, lng: 77.6240 }, { lat: 12.9350, lng: 77.6230 }],
-                'StJohns-SonySignal': [{ lat: 12.9350, lng: 77.6230 }, { lat: 12.9400, lng: 77.6240 }],
-                'SonySignal-Indiranagar100ft': [{ lat: 12.9500, lng: 77.6300 }, { lat: 12.9550, lng: 77.6350 }],
-                'Indiranagar100ft-SonySignal': [{ lat: 12.9550, lng: 77.6350 }, { lat: 12.9500, lng: 77.6300 }],
-                'StJohns-CheckPost': [{ lat: 12.9280, lng: 77.6220 }],
-                'CheckPost-StJohns': [{ lat: 12.9280, lng: 77.6220 }],
-                'MadiwalaMkt-StJohns': [{ lat: 12.9250, lng: 77.6190 }],
-                'StJohns-MadiwalaMkt': [{ lat: 12.9250, lng: 77.6190 }]
-            };
+            const segLens = [];
+            let totalKm = 0;
+            for (let i = 0; i < route.length - 1; i++) {
+                const d = distKmBetween(route[i], route[i + 1]);
+                segLens.push(d);
+                totalKm += d;
+            }
+            // Demo pacing: ~6s per km, clamped so trips stay watchable
+            const durationMs = Math.min(25000, Math.max(8000, totalKm * 6000));
+            const startTime = performance.now();
 
-            let currentPathIndex = 0;
-            const moveAlongPath = () => {
-                if (currentPathIndex >= pathIds.length - 1) {
-                    // Arrived (End of path)
-                    setMovingOfficerId(null);
-                    addLog(`Unit ${officer.name} arrived at location.`, 'text-green-400');
-
-                    // Stay in spot logic
-                    setTimeout(() => {
-                        setOfficers(prev => prev.map(o => {
-                            if (o.id === officerId) {
-                                return { ...o, status: 'patrol', lat: incident.lat, lng: incident.lng };
-                            }
-                            return o;
-                        }));
-                        setActiveRoutes(prev => {
-                            const newRoutes = { ...prev };
-                            delete newRoutes[incident.id];
-                            return newRoutes;
-                        });
-                        addLog(`Unit ${officer.name} resolved incident. Holding position.`, 'text-slate-400');
-                    }, 15000);
-                    return;
-                }
-
-                const currentNodeId = pathIds[currentPathIndex];
-                const nextNodeId = pathIds[currentPathIndex + 1];
-                const targetNode = ROAD_NODES[nextNodeId];
-
-                // Check for waypoints
-                const edgeKey = `${currentNodeId}-${nextNodeId}`;
-                const waypoints = ROAD_WAYPOINTS[edgeKey] || [];
-
-                // Construct full segment path: [Waypoints..., TargetNode]
-                const segmentPoints = [...waypoints, { lat: targetNode.lat, lng: targetNode.lng }];
-
-                let segmentIndex = 0;
-
-                const animateSegment = () => {
-                    if (segmentIndex >= segmentPoints.length) {
-                        currentPathIndex++;
-                        moveAlongPath();
-                        return;
+            // setInterval (not rAF): keeps advancing even in hidden/background tabs;
+            // progress is wall-clock based so throttled ticks stay position-accurate
+            const moveTimer = setInterval(() => {
+                const t = Math.min(1, (performance.now() - startTime) / durationMs);
+                const targetDist = t * totalKm;
+                let acc = 0;
+                let pos = route[route.length - 1];
+                for (let i = 0; i < segLens.length; i++) {
+                    if (acc + segLens[i] >= targetDist) {
+                        const f = segLens[i] === 0 ? 0 : (targetDist - acc) / segLens[i];
+                        pos = {
+                            lat: route[i].lat + (route[i + 1].lat - route[i].lat) * f,
+                            lng: route[i].lng + (route[i + 1].lng - route[i].lng) * f
+                        };
+                        break;
                     }
+                    acc += segLens[i];
+                }
+                setOfficers(prev => prev.map(o => o.id === officerId ? { ...o, lat: pos.lat, lng: pos.lng } : o));
 
-                    const targetPoint = segmentPoints[segmentIndex];
-                    const steps = 60; // 1 second per segment
-                    let step = 0;
-
-                    const segmentInterval = setInterval(() => {
-                        step++;
-                        setOfficers(prev => prev.map(o => {
-                            if (o.id === officerId) {
-                                const dLat = (targetPoint.lat - o.lat) / (steps - step + 1);
-                                const dLng = (targetPoint.lng - o.lng) / (steps - step + 1);
-                                return { ...o, lat: o.lat + dLat, lng: o.lng + dLng };
-                            }
-                            return o;
-                        }));
-
-                        if (step >= steps) {
-                            clearInterval(segmentInterval);
-                            segmentIndex++;
-                            animateSegment();
-                        }
-                    }, 16);
-                };
-
-                animateSegment();
-            };
-
-            moveAlongPath();
+                if (t < 1) return;
+                // Arrived — unit holds at the road-snapped end of the route
+                clearInterval(moveTimer);
+                setMovingOfficerId(null);
+                addLog(`Unit ${officer.name} arrived at location.`, 'text-green-400');
+                setTimeout(() => {
+                    setOfficers(prev => prev.map(o => o.id === officerId ? { ...o, status: 'patrol' } : o));
+                    setActiveRoutes(prev => {
+                        const newRoutes = { ...prev };
+                        delete newRoutes[incident.id];
+                        return newRoutes;
+                    });
+                    addLog(`Unit ${officer.name} resolved incident. Holding position.`, 'text-slate-400');
+                }, 15000);
+            }, 33);
 
             // Close modal and stop loading state
             setDispatching(false);
             setShowDispatchModal(false);
 
         }, 2000);
-    }, [addLog, officers, incidents, repositionOthers]);
+    }, [addLog, officers, incidents]);
 
     // --- LOGIC: TRIGGER AI ADVICE ---
     const triggerAiAnalysis = useCallback(async (incident, topOfficer) => {
@@ -524,21 +468,26 @@ export default function App() {
                     timer = setTimeout(() => {
                         setDemoStage('detected');
 
+                        // A map-click incident takes priority: if the operator already
+                        // reported something, let it flow through the existing pipeline
+                        // instead of manufacturing a scripted one.
+                        if (incidentsRef.current.some(i => i.status !== 'assigned')) return;
+
                         const currentScenario = scenarioIndex % 3;
                         let newIncident = {};
                         if (currentScenario === 0) {
                             addLog("INCOMING CALL: +91-98XXX-XXXX (Tower: SG Palya)", 'text-red-400');
                             addLog("Voice-to-Text Active... Transcribing...", 'text-red-300');
                             setTimeout(() => addLog("Keyword Detected: 'Snatch', 'Bike', 'Help'", 'text-red-400'), 1000);
-                            newIncident = { id: `inc-${Date.now()}`, type: 'theft', location: 'SG Palya Main Road', time: 'Just Now', status: 'pending', priority: 'high', lat: 12.9352, lng: 77.6093, desc: 'Two wheeler snatch & grab reported near Christ University Gate 1. Victim reporting via Dial 112.' };
+                            newIncident = { id: `inc-${Date.now()}`, type: 'theft', location: 'SG Palya Main Road', time: 'Just Now', status: 'pending', priority: 'high', ...snapLatLng(12.9352, 77.6093), desc: 'Two wheeler snatch & grab reported near Christ University Gate 1. Victim reporting via Dial 112.' };
                         } else if (currentScenario === 1) {
                             addLog("Predictive Model Alert: Crowd Density Critical > 85%", 'text-cyan-400');
                             addLog("Correlation: Weather (Rain) + Traffic (High) -> Risk of Public Disorder", 'text-cyan-300');
-                            newIncident = { id: `inc-${Date.now()}`, type: 'predictive', location: 'Sony Signal Junction', time: 'Forecast (+15m)', status: 'pending', priority: 'medium', lat: 12.9400, lng: 77.6240, desc: 'AI Forecast: High probability of traffic deadlock leading to public disorder. Pre-emptive patrol requested.' };
+                            newIncident = { id: `inc-${Date.now()}`, type: 'predictive', location: 'Sony Signal Junction', time: 'Forecast (+15m)', status: 'pending', priority: 'medium', ...snapLatLng(12.9400, 77.6240), desc: 'AI Forecast: High probability of traffic deadlock leading to public disorder. Pre-emptive patrol requested.' };
                         } else {
                             addLog("RADIO SIGNAL: Unit KA-05-334 Requesting Assist", 'text-purple-400');
                             addLog("Signal Triangulation: Madiwala Market", 'text-purple-300');
-                            newIncident = { id: `inc-${Date.now()}`, type: 'assault', location: 'Madiwala Market', time: 'Live Feed', status: 'pending', priority: 'critical', lat: 12.9250, lng: 77.6190, desc: 'Officer Arun Gowda requesting immediate backup. Active altercation in progress.' };
+                            newIncident = { id: `inc-${Date.now()}`, type: 'assault', location: 'Madiwala Market', time: 'Live Feed', status: 'pending', priority: 'critical', ...snapLatLng(12.9250, 77.6190), desc: 'Officer Arun Gowda requesting immediate backup. Active altercation in progress.' };
                         }
                         setIncidents([newIncident]);
                     }, 12000);
@@ -611,6 +560,33 @@ export default function App() {
             setShowOfficerModal(true);
         }
     };
+
+    // Click-anywhere dispatch: only fires when there's no incident already pending,
+    // in either demo or manual mode. Works alongside the demo scheduler via the
+    // 'scanning' stage's priority guard above.
+    const handleMapClick = useCallback((lat, lng) => {
+        if (incidentsRef.current.some(i => i.status !== 'assigned')) return;
+        const pos = snapLatLng(lat, lng);
+        const newIncident = {
+            id: `inc-${Date.now()}`,
+            type: 'manual',
+            location: 'Operator Selected Point',
+            time: 'Just Now',
+            status: 'pending',
+            priority: 'high',
+            lat: pos.lat,
+            lng: pos.lng,
+            desc: 'Manual incident reported by operator via map interface.'
+        };
+        addLog('Manual incident logged at operator-selected coordinates.', 'text-yellow-400');
+        setIncidents([newIncident]);
+        setSelectedIncident(newIncident);
+        setShowDispatchModal(true);
+    }, [addLog]);
+
+    // Debug overlay - flatten all graph edges into one multi-part Polyline (cheap
+    // to render vs. one component per edge across ~17k edges)
+    const roadnetPositions = useMemo(() => ALL_ROAD_EDGES.map(e => e.coords.map(c => [c.lat, c.lng])), []);
 
     return (
         <div className="flex flex-col h-screen bg-slate-950 text-slate-200 font-sans overflow-hidden">
@@ -714,6 +690,13 @@ export default function App() {
                                 attribution='&copy; <a href="https://carto.com/attributions">CARTO</a>'
                             />
 
+                            <MapClickHandler onMapClick={handleMapClick} />
+
+                            {/* ROADNET DEBUG OVERLAY */}
+                            {showRoadnet && (
+                                <Polyline positions={roadnetPositions} pathOptions={{ color: '#334155', weight: 1, opacity: 0.6 }} />
+                            )}
+
                             {/* ZONES */}
                             {heatmapMode && ZONES.map(zone => (
                                 <Circle
@@ -729,11 +712,10 @@ export default function App() {
                                 />
                             ))}
 
-                            {/* ROUTES */}
-                            {Object.entries(activeRoutes).map(([incId, pathIds]) => {
-                                const positions = pathIds.map(id => [ROAD_NODES[id].lat, ROAD_NODES[id].lng]);
-                                return <Polyline key={incId} positions={positions} pathOptions={{ color: '#22c55e', dashArray: '5, 10', weight: 2 }} />;
-                            })}
+                            {/* ROUTES (real street geometry) */}
+                            {Object.entries(activeRoutes).map(([incId, positions]) => (
+                                <Polyline key={incId} positions={positions} pathOptions={{ color: '#22c55e', dashArray: '5, 10', weight: 2 }} />
+                            ))}
 
                             {/* OFFICERS */}
                             {patrolCarMode && officers.map(officer => (
@@ -802,6 +784,13 @@ export default function App() {
                             >
                                 <Navigation className="w-3 h-3 inline mr-2" />
                                 PATROL CARS
+                            </button>
+                            <button
+                                onClick={() => setShowRoadnet(!showRoadnet)}
+                                className={`px-4 py-2 text-xs font-bold rounded shadow-lg backdrop-blur-md border transition-all ${showRoadnet ? 'bg-blue-600 border-blue-400 text-white shadow-blue-500/20' : 'bg-slate-900/80 border-slate-700 text-slate-400'}`}
+                            >
+                                <MapIcon className="w-3 h-3 inline mr-2" />
+                                ROADNET
                             </button>
                         </div>
                     </div>
