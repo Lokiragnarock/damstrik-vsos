@@ -84,7 +84,10 @@ class Simulator:
             min_dist = float('inf')
 
             for asset in idle_assets:
-                dist = haversine_distance(asset.location, event.location)
+                dist = haversine_distance(
+                    (asset.location.lat, asset.location.lng),
+                    (event.location.lat, event.location.lng),
+                )
                 if dist < min_dist:
                     min_dist = dist
                     best_asset = asset
