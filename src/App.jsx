@@ -179,6 +179,59 @@ const ZONES = [
     { id: 'z4', name: 'Madiwala Market', lat: 12.922, lng: 77.618, risk: 'high', type: 'assault', radius: 350 },
 ];
 
+// Hotspot clustering: the risk zones double as patrol sector seeds. Coverage
+// assignment weights hotspots by risk and spreads available units across them.
+const RISK_WEIGHT = { high: 3, medium: 2, low: 1 };
+const SECTOR_PATROL_RADIUS_KM = 0.35; // random-walk containment around the hotspot
+const SECTOR_TRANSIT_KM = 0.4;        // beyond this, route to the hotspot first
+const UNIT_SPACING_KM = 0.25;         // mutual awareness spacing between patrol units
+
+// --- CRIME INTENSITY DIAL (Stream 3) ---
+// Judge-facing dial driving the incident generator's arrival rate. Mean
+// inter-arrival gap is in SIM-seconds (i.e. scaled by SIM_SPEED already being
+// the sim clock's own rate) - these numbers are dramatic pacing choices for a
+// demo, not derived from any real Bengaluru call-volume data.
+// SIM: fabricated arrival-rate ladder, tuned only for how the demo *feels*.
+const CRIME_INTENSITY_LEVELS = [
+    { label: 'Calm Night', meanGapSimS: 100 },
+    { label: 'Standard Patrol', meanGapSimS: 60 },
+    { label: 'Busy Evening', meanGapSimS: 35 },
+    { label: 'Peak Hour', meanGapSimS: 20 },
+    { label: 'Festival Chaos', meanGapSimS: 9 },
+];
+
+// SIM: fabricated severity mix for generated incidents - no real crime-report
+// distribution backs these weights, they just make the queue feel plausible.
+const SEVERITY_WEIGHTS = [
+    { severity: 'low', weight: 0.5 },
+    { severity: 'high', weight: 0.35 },
+    { severity: 'critical', weight: 0.15 },
+];
+// SIM: priority score used purely to order the incident queue for this demo.
+const SEVERITY_PRIORITY = { critical: 3, high: 2, low: 1 };
+
+const GENERATOR_TYPES = ['theft', 'assault', 'traffic', 'public_order'];
+const GENERATOR_DESC = {
+    theft: 'Snatch-theft reported by a bystander near the marked hotspot.',
+    assault: 'Physical altercation reported in progress.',
+    traffic: 'Traffic obstruction / accident reported, congestion building.',
+    public_order: 'Crowd disturbance reported, escalation risk flagged.',
+};
+
+const weightedPick = (items, weightKey) => {
+    const total = items.reduce((s, it) => s + it[weightKey], 0);
+    let r = Math.random() * total; // SIM: uniform draw over the fabricated weights above
+    for (const it of items) {
+        r -= it[weightKey];
+        if (r <= 0) return it;
+    }
+    return items[items.length - 1];
+};
+
+// Exponential inter-arrival draw (Poisson process) around a mean gap.
+// SIM: standard Poisson-process math, but the mean itself is a fabricated dial value.
+const nextArrivalGapSimS = (meanGapSimS) => -meanGapSimS * Math.log(1 - Math.random());
+
 const INITIAL_OFFICERS = [
     {
         id: 'o1',
@@ -241,6 +294,79 @@ const INITIAL_OFFICERS = [
         specialization_desc: 'Lead investigator for organized crime and narcotics.'
     },
 ];
+
+// --- INCIDENT GENERATOR (Stream 3) ---
+// SIM: the whole generator is staged demo pressure. There is no Dial-112 feed;
+// arrival rates, type mixes and severity odds below are invented for the demo
+// (see WHAT-IS-REAL.md). Arrivals are Poisson-sampled per tick, spatially
+// weighted toward high-risk ZONES, and every point is snapped onto the road graph.
+const INTENSITY_LEVELS = [
+    { name: 'Calm Night', ratePerSimMin: 0.12, color: 'text-emerald-400' },   // SIM: fabricated arrival rate
+    { name: 'Quiet Shift', ratePerSimMin: 0.35, color: 'text-lime-400' },     // SIM: fabricated arrival rate
+    { name: 'Steady Shift', ratePerSimMin: 0.8, color: 'text-yellow-400' },   // SIM: fabricated arrival rate
+    { name: 'Weekend Rush', ratePerSimMin: 1.6, color: 'text-orange-400' },   // SIM: fabricated arrival rate
+    { name: 'Festival Chaos', ratePerSimMin: 3.2, color: 'text-red-400' },    // SIM: fabricated arrival rate
+];
+const GEN_TICK_MS = 1500;
+const MAX_PENDING = 15; // SIM: safety cap so the queue stays readable on screen
+
+const GEN_TYPES = ['theft', 'assault', 'traffic', 'public_order'];
+// SIM: invented severity mix for generated incidents
+const SEVERITY_MIX = [['low', 0.5], ['high', 0.35], ['critical', 0.15]];
+const SEVERITY_TO_PRIORITY = { low: 'medium', high: 'high', critical: 'critical' };
+
+// SIM: canned incident descriptions keyed by type
+const GEN_DESCS = {
+    theft: 'Two-wheeler snatch reported by passerby. Suspect direction unknown.',
+    assault: 'Physical altercation reported. Possible injuries on scene.',
+    traffic: 'Traffic obstruction building. Signal discipline breaking down.',
+    public_order: 'Crowd gathering, noise complaints. Situation not yet violent.',
+};
+
+const pickWeightedZone = () => {
+    const total = ZONES.reduce((s, z) => s + RISK_WEIGHT[z.risk], 0);
+    let r = Math.random() * total;
+    for (const z of ZONES) {
+        r -= RISK_WEIGHT[z.risk];
+        if (r <= 0) return z;
+    }
+    return ZONES[ZONES.length - 1];
+};
+
+// Poisson sample via Knuth (fine for the small per-tick means we use)
+const samplePoisson = (mean) => {
+    const L = Math.exp(-mean);
+    let k = 0, p = 1;
+    do { k++; p *= Math.random(); } while (p > L);
+    return k - 1;
+};
+
+// Build one generated incident: zone-weighted position, road-snapped.
+const makeGeneratedIncident = () => {
+    const zone = pickWeightedZone();
+    // Uniform point inside the zone circle, then snapped to the nearest road
+    const rM = zone.radius * Math.sqrt(Math.random());
+    const theta = Math.random() * 2 * Math.PI;
+    const rawLat = zone.lat + (rM * Math.cos(theta)) / 110574;
+    const rawLng = zone.lng + (rM * Math.sin(theta)) / (111320 * Math.cos(zone.lat * Math.PI / 180));
+    const pos = snapLatLng(rawLat, rawLng);
+    // SIM: 65% of incidents match the zone's signature crime type
+    const type = Math.random() < 0.65 ? zone.type : GEN_TYPES[Math.floor(Math.random() * GEN_TYPES.length)];
+    let severity = 'low', r = Math.random();
+    for (const [sev, p] of SEVERITY_MIX) { if (r < p) { severity = sev; break; } r -= p; }
+    return {
+        id: `inc-${Date.now()}-${Math.floor(Math.random() * 1e5)}`,
+        type,
+        severity,
+        location: `${zone.name} vicinity`,
+        time: 'Live',
+        status: 'pending',
+        priority: SEVERITY_TO_PRIORITY[severity],
+        lat: pos.lat, lng: pos.lng,
+        desc: GEN_DESCS[type] || 'Incident reported via simulated feed.', // SIM
+        createdWall: Date.now(),
+    };
+};
 
 const CRIME_TYPES = {
     theft: { label: 'Theft / Snatch', color: 'text-purple-400', bg: 'bg-purple-500/20', border: 'border-purple-500', mapColor: '#a855f7' },
@@ -347,6 +473,28 @@ export default function App() {
     const incidentsRef = useRef(incidents);
     useEffect(() => { incidentsRef.current = incidents; }, [incidents]);
 
+    // Latest officers, same reason (sector assignment timer reads live positions)
+    const officersRef = useRef(officers);
+    useEffect(() => { officersRef.current = officers; }, [officers]);
+
+    // Sector assignment: officerId -> zoneId (null/undefined = unassigned)
+    const sectorRef = useRef({});
+
+    // --- SIM CLOCK (single source of truth) ---
+    // Sim-seconds elapsed since load, advanced at SIM_SPEED x wall time. Every
+    // incident timer / queue calculation reads this ref instead of Date.now(),
+    // so pausing/backgrounding the tab never desyncs the demo's own clock.
+    const simClockRef = useRef(0);
+    useEffect(() => {
+        let last = performance.now();
+        const id = setInterval(() => {
+            const now = performance.now();
+            simClockRef.current += ((now - last) / 1000) * SIM_SPEED;
+            last = now;
+        }, 250);
+        return () => clearInterval(id);
+    }, []);
+
     // Per-officer idle patrol state, keyed by officer id: { coords, cumKm, lengthKm,
     // progressKm, fromNodeId, pausedUntil }. Lives outside React state since it's
     // advanced every tick and only the resulting lat/lng needs to trigger a render.
@@ -359,10 +507,11 @@ export default function App() {
     // Ingestion Logs State
     const [logs, setLogs] = useState([]);
 
-    // VC Demo Mode State
-    const [demoMode, setDemoMode] = useState(true);
-    const [demoStage, setDemoStage] = useState('scanning');
-    const [scenarioIndex, setScenarioIndex] = useState(0); // 0: Call, 1: Predictive, 2: Officer Request
+    // Crime Intensity dial: index into CRIME_INTENSITY_LEVELS, drives the
+    // incident generator below. This dial-driven generator is the default
+    // mode - it replaces the old scripted 3-scenario demo loop entirely.
+    const [crimeIntensityIdx, setCrimeIntensityIdx] = useState(1); // default: Standard Patrol
+    const nextArrivalSimRef = useRef(0); // sim-time of the next scheduled incident
 
     const addLog = useCallback((msg, color = 'text-slate-300') => {
         const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -394,24 +543,67 @@ export default function App() {
                 let vMs = state?.vMs ?? 0;
 
                 if (!leg) {
-                    const step = randomWalkStep({ lat: o.lat, lng: o.lng }, fromNodeId);
-                    if (!step) return o; // isolated node, nowhere to go
-                    const cumKm = [0];
-                    for (let i = 1; i < step.coords.length; i++) {
-                        cumKm.push(cumKm[i - 1] + distKmBetween(step.coords[i - 1], step.coords[i]));
+                    const zone = ZONES.find(z => z.id === sectorRef.current[o.id]) || null;
+
+                    // Far from the assigned hotspot: route there along the graph
+                    // instead of wandering, as one long transit leg.
+                    if (zone && distKmBetween(o, zone) > SECTOR_TRANSIT_KM) {
+                        const route = shortestPath({ lat: o.lat, lng: o.lng }, { lat: zone.lat, lng: zone.lng });
+                        if (route.length >= 2) {
+                            const cumKm = [0];
+                            for (let i = 1; i < route.length; i++) {
+                                cumKm.push(cumKm[i - 1] + distKmBetween(route[i - 1], route[i]));
+                            }
+                            leg = { coords: route, cumKm, lengthKm: cumKm[cumKm.length - 1], fromNodeId: null, isTransit: true };
+                            fromNodeId = null;
+                            progressKm = 0;
+                        }
                     }
-                    leg = { coords: step.coords, cumKm, lengthKm: step.lengthKm, toNodeId: step.toNodeId, fromNodeId: step.fromNodeId, highway: step.highway };
-                    fromNodeId = step.fromNodeId;
-                    progressKm = 0;
+
+                    // In (or near) the sector: random-walk, rejecting steps that
+                    // leave the patrol radius or crowd another unit's position.
+                    if (!leg) {
+                        for (let attempt = 0; attempt < 4 && !leg; attempt++) {
+                            const step = randomWalkStep({ lat: o.lat, lng: o.lng }, fromNodeId);
+                            if (!step) return o; // isolated node, nowhere to go
+                            const end = step.coords[step.coords.length - 1];
+                            const leavesZone = zone && distKmBetween(end, zone) > SECTOR_PATROL_RADIUS_KM;
+                            // Mutual awareness: don't drift onto a unit patrolling a
+                            // different sector (same-sector units are allowed close).
+                            const crowded = prev.some(other =>
+                                other.id !== o.id && other.status === 'patrol' &&
+                                sectorRef.current[other.id] !== sectorRef.current[o.id] &&
+                                distKmBetween(end, other) < UNIT_SPACING_KM
+                            );
+                            // Last attempt always passes so dead ends stay escapable.
+                            if ((leavesZone || crowded) && attempt < 3) continue;
+                            const cumKm = [0];
+                            for (let i = 1; i < step.coords.length; i++) {
+                                cumKm.push(cumKm[i - 1] + distKmBetween(step.coords[i - 1], step.coords[i]));
+                            }
+                            leg = { coords: step.coords, cumKm, lengthKm: step.lengthKm, toNodeId: step.toNodeId, fromNodeId: step.fromNodeId, highway: step.highway };
+                            fromNodeId = step.fromNodeId;
+                            progressKm = 0;
+                        }
+                        if (!leg) return o;
+                    }
                 }
 
                 // Integrate patrol kinematics in 1s sim substeps: accelerate toward
                 // cruise speed, brake so we roll through the end junction slowly.
-                const cruiseMs = patrolSpeedKmh(leg.highway) / 3.6;
+                // Transit legs span many edges, so look up the road class at the
+                // current position instead of using a single per-leg class.
+                const highwayAtKm = (l, km) => {
+                    for (let i = 1; i < l.coords.length; i++) {
+                        if (l.cumKm[i] >= km) return l.coords[i].highway;
+                    }
+                    return l.coords[l.coords.length - 1].highway;
+                };
                 const junctionMs = JUNCTION_KMH / 3.6;
                 let remainingSimS = (TICK_MS / 1000) * SIM_SPEED;
                 while (remainingSimS > 0 && progressKm < leg.lengthKm) {
                     const dt = Math.min(1, remainingSimS);
+                    const cruiseMs = patrolSpeedKmh(leg.isTransit ? highwayAtKm(leg, progressKm) : leg.highway) / 3.6;
                     const remainM = Math.max(0, (leg.lengthKm - progressKm) * 1000);
                     const cap = Math.min(cruiseMs, Math.sqrt(junctionMs ** 2 + 2 * DECEL_MS2 * remainM));
                     vMs = Math.max(Math.min(vMs + ACCEL_MS2 * dt, cap), vMs - DECEL_MS2 * dt);
@@ -454,14 +646,72 @@ export default function App() {
         return () => clearInterval(tick);
     }, []);
 
+    // Co-aware coverage: every few seconds, greedily assign non-busy units to
+    // hotspot sectors - higher-weight hotspots are covered first, and no hotspot
+    // gets a second unit while another is still uncovered. Assignments are sticky
+    // so units don't churn between sectors on marginal distance differences.
+    useEffect(() => {
+        const rebalance = setInterval(() => {
+            const current = officersRef.current;
+            const avail = current.filter(o => o.status === 'patrol');
+            const zonesByWeight = [...ZONES].sort((a, b) => RISK_WEIGHT[b.risk] - RISK_WEIGHT[a.risk]);
+
+            // Greedy rounds: each round covers every hotspot once (weight order)
+            // with its nearest free unit, then surplus units double up on the
+            // highest-weight hotspots. Stickiness bonus damps pointless churn.
+            const assignment = {}; // officerId -> zone
+            const pool = new Set(avail.map(o => o.id));
+            while (pool.size > 0) {
+                let progressed = false;
+                for (const zone of zonesByWeight) {
+                    if (pool.size === 0) break;
+                    let bestO = null, bestD = Infinity;
+                    for (const o of avail) {
+                        if (!pool.has(o.id)) continue;
+                        let d = distKmBetween(o, zone);
+                        if (sectorRef.current[o.id] === zone.id) d -= 0.5; // stickiness
+                        if (d < bestD) { bestD = d; bestO = o; }
+                    }
+                    if (bestO) {
+                        assignment[bestO.id] = zone;
+                        pool.delete(bestO.id);
+                        progressed = true;
+                    }
+                }
+                if (!progressed) break;
+            }
+
+            // Apply changes: log rebalances, drop stale transit legs, sync state.
+            let changed = false;
+            for (const o of current) {
+                const zone = assignment[o.id] || null;
+                const zoneId = zone ? zone.id : null;
+                if ((sectorRef.current[o.id] ?? null) === zoneId) continue;
+                sectorRef.current[o.id] = zoneId;
+                const st = patrolStateRef.current[o.id];
+                if (st?.leg) st.leg = null; // re-plan next tick toward the new sector
+                if (zone) addLog(`Coverage rebalance: ${o.name.split(' ').slice(1).join(' ')} → ${zone.name} sector`, 'text-cyan-400');
+                changed = true;
+            }
+            if (changed) {
+                setOfficers(prev => prev.map(o => {
+                    const z = ZONES.find(zz => zz.id === sectorRef.current[o.id]) || null;
+                    const name = z ? z.name : null;
+                    return (o.sector ?? null) === name ? o : { ...o, sector: name };
+                }));
+            }
+        }, 3000);
+        return () => clearInterval(rebalance);
+    }, [addLog]);
+
     // --- LOGIC: HANDLE DISPATCH ---
-    const handleDispatch = useCallback((officerId) => {
+    const handleDispatch = useCallback((officerId, incidentId) => {
         setDispatching(true);
         addLog(`Command confirmed. Syncing directives to unit device...`, 'text-yellow-400');
 
         setTimeout(() => {
-            const officer = officers.find(o => o.id === officerId);
-            const incident = incidents.find(i => i.status !== 'assigned');
+            const officer = officersRef.current.find(o => o.id === officerId);
+            const incident = incidentsRef.current.find(i => i.id === incidentId) || incidentsRef.current.find(i => i.status === 'pending');
 
             if (!officer || !incident) {
                 setDispatching(false);
@@ -478,7 +728,7 @@ export default function App() {
             // patrolling fresh from the arrival point instead of a stale leg
             patrolStateRef.current[officerId] = null;
             setOfficers(prev => prev.map(o => o.id === officerId ? { ...o, status: 'busy' } : o));
-            setIncidents(prev => prev.map(i => i.status !== 'assigned' ? { ...i, status: 'assigned', assignedTo: officerId } : i));
+            setIncidents(prev => prev.map(i => i.id === incident.id ? { ...i, status: 'assigned', assignedTo: officerId } : i));
 
             // 3. Animate along the route with real kinematics on the sim clock
             setMovingOfficerId(officerId);
@@ -520,6 +770,7 @@ export default function App() {
                 clearInterval(moveTimer);
                 setMovingOfficerId(null);
                 addLog(`Unit ${officer.name} arrived at location.`, 'text-green-400');
+                setIncidents(prev => prev.map(i => i.id === incident.id ? { ...i, status: 'onscene', arrivedAtSim: simClockRef.current } : i));
                 setTimeout(() => {
                     setOfficers(prev => prev.map(o => o.id === officerId ? { ...o, status: 'patrol' } : o));
                     setActiveRoutes(prev => {
@@ -527,6 +778,7 @@ export default function App() {
                         delete newRoutes[incident.id];
                         return newRoutes;
                     });
+                    setIncidents(prev => prev.filter(i => i.id !== incident.id));
                     addLog(`Unit ${officer.name} resolved incident. Holding position.`, 'text-slate-400');
                 }, 15000);
             }, 33);
@@ -558,137 +810,87 @@ export default function App() {
     const recommendedOfficers = useMemo(() => {
         if (!selectedIncident) return [];
         return officers
-            .filter(o => o.status !== 'busy')
+            .filter(o => o.status === 'patrol')
             .map(o => ({ ...o, ...calculateFitScore(o, selectedIncident) }))
             .sort((a, b) => b.score - a.score)
             .slice(0, 3);
     }, [selectedIncident, officers]);
 
-    // AUTOMATED DEMO WORKFLOW - DYNAMIC SCENARIOS
+    // --- INCIDENT GENERATOR (Stream 3, default mode) ---
+    // Replaces the old scripted 3-scenario demo loop: a Poisson-ish arrival
+    // process, paced by the Crime Intensity dial, spatially weighted toward
+    // the higher-risk ZONES. This is the default/only mode now - preserving
+    // the old single-incident scripted loop alongside a real incident queue
+    // would have meant maintaining two incompatible incident-array shapes, so
+    // it was removed rather than kept behind a toggle.
     useEffect(() => {
-        if (!demoMode) return;
+        const meanGap = CRIME_INTENSITY_LEVELS[crimeIntensityIdx].meanGapSimS;
+        if (nextArrivalSimRef.current === 0) {
+            nextArrivalSimRef.current = simClockRef.current + nextArrivalGapSimS(meanGap);
+        }
+        const check = setInterval(() => {
+            if (simClockRef.current < nextArrivalSimRef.current) return;
 
-        let timer;
+            // SIM: hotspot-weighted spawn point - pick a zone by risk weight,
+            // then jitter within its radius, then snap onto the real road graph.
+            const zone = weightedPick(ZONES.map(z => ({ ...z, weight: RISK_WEIGHT[z.risk] })), 'weight');
+            const jitterKm = Math.random() * (zone.radius / 1000);
+            const angle = Math.random() * 2 * Math.PI;
+            const dLat = (jitterKm * Math.cos(angle)) / 110.574;
+            const dLng = (jitterKm * Math.sin(angle)) / (111.32 * Math.cos(zone.lat * Math.PI / 180));
+            const pos = snapLatLng(zone.lat + dLat, zone.lng + dLng);
 
-        const advanceStage = () => {
-            switch (demoStage) {
-                case 'scanning':
-                    // Slow down new events (12s)
-                    timer = setTimeout(() => {
-                        setDemoStage('detected');
+            const type = GENERATOR_TYPES[Math.floor(Math.random() * GENERATOR_TYPES.length)]; // SIM: uniform type draw
+            const severity = weightedPick(SEVERITY_WEIGHTS, 'weight').severity;
 
-                        // A map-click incident takes priority: if the operator already
-                        // reported something, let it flow through the existing pipeline
-                        // instead of manufacturing a scripted one.
-                        if (incidentsRef.current.some(i => i.status !== 'assigned')) return;
+            const newIncident = {
+                id: `inc-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+                type,
+                severity,
+                priority: severity, // legacy field some UI still reads
+                priorityScore: SEVERITY_PRIORITY[severity],
+                location: zone.name,
+                time: 'Just Now',
+                status: 'pending',
+                lat: pos.lat,
+                lng: pos.lng,
+                desc: GENERATOR_DESC[type],
+                createdAtSim: simClockRef.current,
+            };
+            addLog(`INCIDENT: ${CRIME_TYPES[type].label} (${severity.toUpperCase()}) near ${zone.name}`, severity === 'critical' ? 'text-red-400' : 'text-yellow-300');
+            setIncidents(prev => [...prev, newIncident]);
 
-                        const currentScenario = scenarioIndex % 3;
-                        let newIncident = {};
-                        if (currentScenario === 0) {
-                            addLog("INCOMING CALL: +91-98XXX-XXXX (Tower: SG Palya)", 'text-red-400');
-                            addLog("Voice-to-Text Active... Transcribing...", 'text-red-300');
-                            setTimeout(() => addLog("Keyword Detected: 'Snatch', 'Bike', 'Help'", 'text-red-400'), 1000);
-                            newIncident = { id: `inc-${Date.now()}`, type: 'theft', location: 'SG Palya Main Road', time: 'Just Now', status: 'pending', priority: 'high', ...snapLatLng(12.9352, 77.6093), desc: 'Two wheeler snatch & grab reported near Christ University Gate 1. Victim reporting via Dial 112.' };
-                        } else if (currentScenario === 1) {
-                            addLog("Predictive Model Alert: Crowd Density Critical > 85%", 'text-cyan-400');
-                            addLog("Correlation: Weather (Rain) + Traffic (High) -> Risk of Public Disorder", 'text-cyan-300');
-                            newIncident = { id: `inc-${Date.now()}`, type: 'predictive', location: 'Sony Signal Junction', time: 'Forecast (+15m)', status: 'pending', priority: 'medium', ...snapLatLng(12.9400, 77.6240), desc: 'AI Forecast: High probability of traffic deadlock leading to public disorder. Pre-emptive patrol requested.' };
-                        } else {
-                            addLog("RADIO SIGNAL: Unit KA-05-334 Requesting Assist", 'text-purple-400');
-                            addLog("Signal Triangulation: Madiwala Market", 'text-purple-300');
-                            newIncident = { id: `inc-${Date.now()}`, type: 'assault', location: 'Madiwala Market', time: 'Live Feed', status: 'pending', priority: 'critical', ...snapLatLng(12.9250, 77.6190), desc: 'Officer Arun Gowda requesting immediate backup. Active altercation in progress.' };
-                        }
-                        setIncidents([newIncident]);
-                    }, 12000);
-                    break;
-
-                case 'detected':
-                    timer = setTimeout(() => {
-                        setDemoStage('analyzing');
-                    }, 4000);
-                    break;
-
-                case 'analyzing':
-                    const incident = incidents[0];
-                    if (incident) {
-                        setSelectedIncident(incident);
-                        setShowDispatchModal(true);
-                        addLog("Calculating Officer Fit Scores (Skill vs Distance vs Fatigue)...", 'text-yellow-300');
-
-                        const bestOfficer = officers
-                            .filter(o => o.status !== 'busy')
-                            .map(o => ({ ...o, ...calculateFitScore(o, incident) }))
-                            .sort((a, b) => b.score - a.score)[0];
-
-                        if (bestOfficer) {
-                            triggerAiAnalysis(incident, bestOfficer);
-                        }
-                    }
-                    timer = setTimeout(() => {
-                        setDemoStage('dispatching');
-                    }, 8000); // Allow time to read analysis
-                    break;
-
-                case 'dispatching':
-                    const bestOfficer = officers
-                        .filter(o => o.status !== 'busy')
-                        .map(o => ({ ...o, ...calculateFitScore(o, incidents[0]) }))
-                        .sort((a, b) => b.score - a.score)[0];
-
-                    if (bestOfficer) {
-                        addLog(`Auto-Authorizing Dispatch for Officer ${bestOfficer?.name}...`, 'text-green-300');
-                        handleDispatch(bestOfficer.id);
-                    }
-                    timer = setTimeout(() => {
-                        setDemoStage('resolved');
-                    }, 2000);
-                    break;
-
-                case 'resolved':
-                    // Wait for resolution (linked to handleDispatch timeout)
-                    timer = setTimeout(() => {
-                        setScenarioIndex(prev => prev + 1);
-                        setIncidents([]);
-                        // DO NOT RESET OFFICERS
-                        setShowDispatchModal(false);
-                        setAiAdvice(null);
-                        setDemoStage('scanning');
-                    }, 20000);
-                    break;
-            }
-        };
-
-        advanceStage();
-        return () => clearTimeout(timer);
-    }, [demoMode, demoStage]); // Main driver
+            nextArrivalSimRef.current = simClockRef.current + nextArrivalGapSimS(meanGap);
+        }, 500);
+        return () => clearInterval(check);
+    }, [crimeIntensityIdx, addLog]);
 
     // Handle Officer Click
     const handleOfficerClick = (officer) => {
-        if (!demoMode) {
-            setSelectedOfficer(officer);
-            setShowOfficerModal(true);
-        }
+        setSelectedOfficer(officer);
+        setShowOfficerModal(true);
     };
 
-    // Click-anywhere dispatch: only fires when there's no incident already pending,
-    // in either demo or manual mode. Works alongside the demo scheduler via the
-    // 'scanning' stage's priority guard above.
+    // Click-anywhere dispatch: creates a manual incident at the snapped point.
+    // (Stream 3 chunk 4 replaces this with a crime-type picker popup.)
     const handleMapClick = useCallback((lat, lng) => {
-        if (incidentsRef.current.some(i => i.status !== 'assigned')) return;
         const pos = snapLatLng(lat, lng);
         const newIncident = {
             id: `inc-${Date.now()}`,
             type: 'manual',
+            severity: 'high',
+            priority: 'high',
+            priorityScore: SEVERITY_PRIORITY.high,
             location: 'Operator Selected Point',
             time: 'Just Now',
             status: 'pending',
-            priority: 'high',
             lat: pos.lat,
             lng: pos.lng,
-            desc: 'Manual incident reported by operator via map interface.'
+            desc: 'Manual incident reported by operator via map interface.',
+            createdAtSim: simClockRef.current,
         };
         addLog('Manual incident logged at operator-selected coordinates.', 'text-yellow-400');
-        setIncidents([newIncident]);
+        setIncidents(prev => [...prev, newIncident]);
         setSelectedIncident(newIncident);
         setShowDispatchModal(true);
     }, [addLog]);
@@ -774,6 +976,7 @@ export default function App() {
                                     <div>
                                         <div className="text-sm font-bold text-white leading-tight">{officer.name}</div>
                                         <div className="text-[10px] text-slate-400 font-mono mt-0.5">{officer.skill[0]} Specialist</div>
+                                        {officer.sector && <div className="text-[10px] text-cyan-500 font-mono mt-0.5">▸ {officer.sector}</div>}
                                     </div>
                                 </div>
                                 <div className="text-right">
@@ -1130,7 +1333,7 @@ export default function App() {
                                     </div>
                                     <div>
                                         <h2 className="text-xl font-bold text-white">{selectedOfficer.name}</h2>
-                                        <p className="text-xs text-slate-400">{selectedOfficer.badge} • {selectedOfficer.vehicle}</p>
+                                        <p className="text-xs text-slate-400">{selectedOfficer.badge} • {selectedOfficer.vehicle}{selectedOfficer.sector ? ` • ${selectedOfficer.sector} sector` : ''}</p>
                                     </div>
                                 </div>
                                 <button onClick={() => setShowOfficerModal(false)} className="text-slate-400 hover:text-white">

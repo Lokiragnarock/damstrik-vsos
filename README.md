@@ -1,38 +1,59 @@
 # Damstrik V-OS Simulator
 
-The **V-OS Zero-Data Simulator** is a real-time logic engine for emergency response visualization. It simulates assets (PCR vans, patrols) moving on a road network and responding to generated events.
+Read WHAT-IS-REAL.md before touching this app — it's the contract for what is real vs simulated.
+
+A real-time simulation engine for emergency response visualization. Assets (PCR vans, patrols) move on a road network and respond to generated events.
 
 ## Features
-- **Graph-Based Movement**: Assets follow real-world intersections in T. Nagar, Chennai.
-- **Real-Time Telemetry**: WebSocket-based state broadcasting.
-- **Predictive Heatmaps**: Dynamic risk visualization based on event density.
-- **Asset Audit**: Shift tracking and fatigue monitoring.
+- Graph-based movement: assets follow real OSM intersections in Koramangala/Madiwala, Bengaluru
+- Real-time telemetry over WebSockets
+- Heatmap overlay driven by event density
+- Asset audit: shift tracking and fatigue display
 
 ## Tech Stack
-- **Backend**: Python, FastAPI, Uvicorn, WebSockets
-- **Frontend**: HTML5, Tailwind CSS, Leaflet.js
-- **Simulation**: In-memory graph traversal and state management.
+- Backend: Python, FastAPI, Uvicorn, WebSockets
+- Frontend: HTML5, Tailwind CSS, Leaflet.js
+- Simulation: in-memory graph traversal and state management
 
 ## Local Setup
 
-1. **Install Dependencies**:
+There are two separate frontends in this repo — run whichever one you need.
+
+### Option A: Python backend + HTML5/Leaflet dashboard (real simulation)
+
+This is the one with the actual FastAPI simulation loop over WebSockets.
+
+1. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
 
-2. **Run the Simulator**:
+2. Run the simulator:
    ```bash
    # Windows
    .\run.bat
-   
+
    # Manual
    python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
    ```
 
-3. **Access Dashboard**:
-   Open `http://localhost:8000` in your browser.
+3. Open `http://localhost:8000` in your browser.
+
+### Option B: React/Vite frontend (standalone client-side demo)
+
+`src/App.jsx` is a separate, self-contained React app — it does **not** connect to the Python backend. It runs its own incident generator entirely in the browser.
+
+1. Install dependencies:
+   ```bash
+   npm install
+   ```
+
+2. Run the dev server:
+   ```bash
+   npm run dev
+   ```
+
+3. Open the URL Vite prints (default `http://localhost:5173`).
 
 ## Deployment Note
-This application uses a **persistent simulation loop** and **WebSockets**. It requires a hosting provider that supports long-running processes (e.g., **Render**, **Railway**, **DigitalOcean**, **Heroku**). 
-
-**It is NOT compatible with standard Vercel/Netlify serverless hosting** because the simulation loop will be terminated by execution time limits.
+The app runs a persistent simulation loop over WebSockets, so it needs a host that supports long-running processes (Render, Railway, DigitalOcean, Heroku). It will not work on Vercel/Netlify serverless — execution time limits kill the loop.

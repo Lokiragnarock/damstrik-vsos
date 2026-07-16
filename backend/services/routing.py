@@ -7,15 +7,15 @@ from ..core.models import Location
 # These match the visual "metro lines" from the frontend map.
 
 NODES = {
-    "SonySignal": (12.9450, 77.6250),       # x: 70, y: 20
-    "ChristUniv": (12.9360, 77.6050),       # x: 48, y: 62
-    "MadiwalaMkt": (12.9220, 77.6180),      # x: 80, y: 80
-    "Koramangala5th": (12.9340, 77.6200),   # x: 25, y: 35
-    "ForumMall": (12.9350, 77.6100),        # x: 10, y: 10
-    "StJohns": (12.9300, 77.6200),          # x: 60, y: 50 (Central Hub)
-    "DairyCircle": (12.9380, 77.6000),      # x: 10, y: 60
-    "BTMJunction": (12.9150, 77.6100),      # x: 50, y: 90
-    "Indiranagar100ft": (12.9600, 77.6400), # x: 90, y: 10
+    "SonySignal": (12.9450, 77.6250),
+    "ChristUniv": (12.9360, 77.6050),
+    "MadiwalaMkt": (12.9220, 77.6180),
+    "Koramangala5th": (12.9340, 77.6200),
+    "ForumMall": (12.9350, 77.6100),
+    "StJohns": (12.9300, 77.6200),          # Central Hub
+    "DairyCircle": (12.9380, 77.6000),
+    "BTMJunction": (12.9150, 77.6100),
+    "Indiranagar100ft": (12.9600, 77.6400),
     "WiproPark": (12.9320, 77.6300),        # Near Sony Signal
     "Koramangala80ft": (12.9400, 77.6200),  # Connecting Sony Signal and Forum
     "JyotiNivas": (12.9330, 77.6150),       # Near 5th Block

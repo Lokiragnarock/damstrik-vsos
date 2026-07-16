@@ -12,3 +12,7 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Node
+node_modules/
+damstrik-vsos/dist/

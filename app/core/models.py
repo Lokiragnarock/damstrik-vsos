@@ -11,6 +11,7 @@ class AssetType(str, Enum):
 class AssetStatus(str, Enum):
     IDLE = "IDLE"
     DISPATCHED = "DISPATCHED"
+    BUSY = "BUSY"
     OFF_DUTY = "OFF_DUTY"
 
 class EventType(str, Enum):
@@ -40,6 +41,8 @@ class Asset(BaseModel):
     time_worked_minutes: float = 0.0
     current_node: Optional[str] = None # For Graph Movement
     target_node: Optional[str] = None
+    path: List[str] = [] # Path to follow (list of nodes)
+    target_event_id: Optional[str] = None
 
 class Event(BaseModel):
     event_id: str
@@ -48,6 +51,7 @@ class Event(BaseModel):
     location: Location
     status: EventStatus
     created_at: datetime = datetime.now()
+    node_id: Optional[str] = None # Nearest road node, for routing
 
 class HexGrid(BaseModel):
     hex_id: str

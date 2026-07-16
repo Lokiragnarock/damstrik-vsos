@@ -1,6 +1,4 @@
-console.log("App.js is executing...");
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
-console.log("React globals loaded:", { useState, useEffect });
 
 // Fallback for missing LucideReact icons
 if (!window.LucideReact || Object.keys(window.LucideReact).length === 0) {

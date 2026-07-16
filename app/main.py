@@ -50,10 +50,7 @@ async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
         while True:
-            data = await websocket.receive_text()
-            # Handle incoming commands from the dashboard (e.g., dispatch confirmation)
-            # For now, just echo or log
-            print(f"Received command: {data}")
+            await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
